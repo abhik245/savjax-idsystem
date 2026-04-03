@@ -1,0 +1,48 @@
+# Enterprise Folder Structure
+
+```txt
+apps/
+  web/
+    app/
+      (auth)/login/
+      (dashboard)/
+      globals.css
+      layout.tsx
+    components/
+      ui/
+      auth/
+      dashboard/
+    lib/
+      api/
+      hooks/
+      utils/
+      constants/
+    store/
+    types/
+  api/
+    src/
+      common/
+        decorators/
+        guards/
+        enums/
+        filters/
+      config/
+      modules/
+        auth/
+        users/
+        schools/
+        students/
+        templates/
+        workflow/
+        orders/
+        print-jobs/
+        billing/
+        analytics/
+      prisma/
+      redis/
+      logger/
+    prisma/
+      schema.prisma
+      seed.ts
+```
+

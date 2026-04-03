@@ -1,0 +1,1070 @@
+{
+  "startedAt": "2026-03-28T12:27:51.432Z",
+  "apiBase": "http://localhost:4000/api/v2",
+  "webBase": "http://localhost:3000",
+  "phaseWindow": "16-30",
+  "webChecks": [
+    {
+      "route": "/",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "route": "/login",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "route": "/dashboard",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "route": "/dashboard/access",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "route": "/parent/portal",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "route": "/parent/intake?intake_token=demo-school-2026",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "route": "/parent/intake?token=demo-school-2026",
+      "status": 200,
+      "ok": true
+    }
+  ],
+  "authChecks": [
+    {
+      "key": "super",
+      "email": "main.admin@demo.com",
+      "status": 200,
+      "ok": true,
+      "detail": "SUPER_ADMIN"
+    },
+    {
+      "key": "company",
+      "email": "company.admin@demo.com",
+      "status": 200,
+      "ok": true,
+      "detail": "COMPANY_ADMIN"
+    },
+    {
+      "key": "sales",
+      "email": "sales@demo.com",
+      "status": 200,
+      "ok": true,
+      "detail": "SALES_PERSON"
+    },
+    {
+      "key": "printer",
+      "email": "printer@demo.com",
+      "status": 200,
+      "ok": true,
+      "detail": "PRINTING"
+    },
+    {
+      "key": "schoolAdmin",
+      "email": "school.admin@demo.com",
+      "status": 200,
+      "ok": true,
+      "detail": "SCHOOL_ADMIN"
+    },
+    {
+      "key": "schoolStaff",
+      "email": "school.staff@demo.com",
+      "status": 200,
+      "ok": true,
+      "detail": "SCHOOL_STAFF"
+    }
+  ],
+  "flowChecks": [
+    {
+      "key": "parent_otp_send",
+      "status": 201,
+      "ok": true
+    },
+    {
+      "key": "parent_otp_verify",
+      "status": 201,
+      "ok": true
+    },
+    {
+      "key": "parent_photo_analyze",
+      "status": 201,
+      "ok": true
+    },
+    {
+      "key": "parent_submit_student",
+      "status": 201,
+      "ok": true
+    },
+    {
+      "key": "tenant_isolation_sales_out_of_scope",
+      "status": 403,
+      "ok": true
+    },
+    {
+      "key": "tenant_isolation_school_admin_out_of_scope",
+      "status": 403,
+      "ok": true
+    }
+  ],
+  "apiRouteChecks": [
+    {
+      "method": "POST",
+      "route": "/admin/approval-chains/:chainId/activate",
+      "resolvedPath": "/admin/approval-chains/chain_test_id/activate",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/approval-workflows",
+      "resolvedPath": "/admin/approval-workflows",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/approval-workflows/:workflowId",
+      "resolvedPath": "/admin/approval-workflows/cmn9yh7fq00d2dum2sa9zeffp",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/approval-workflows/:workflowId/actions",
+      "resolvedPath": "/admin/approval-workflows/cmn9yh7fq00d2dum2sa9zeffp/actions",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/approval-workflows/bulk-actions",
+      "resolvedPath": "/admin/approval-workflows/bulk-actions",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/audit-logs",
+      "resolvedPath": "/admin/audit-logs",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/overview/drilldown",
+      "resolvedPath": "/admin/overview/drilldown",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/overview.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/overview/kpis",
+      "resolvedPath": "/admin/overview/kpis",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/overview.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/overview/sales-performance",
+      "resolvedPath": "/admin/overview/sales-performance",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/overview.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/overview/timeseries",
+      "resolvedPath": "/admin/overview/timeseries",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/overview.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/print-jobs",
+      "resolvedPath": "/admin/print-jobs",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/print-jobs/:printJobId",
+      "resolvedPath": "/admin/print-jobs/cmmkiwvce001hg1gb9ex149x3",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/print-jobs/:printJobId/export.csv",
+      "resolvedPath": "/admin/print-jobs/cmmkiwvce001hg1gb9ex149x3/export.csv",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/print-jobs/:printJobId/generate-artifact",
+      "resolvedPath": "/admin/print-jobs/cmmkiwvce001hg1gb9ex149x3/generate-artifact",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/print-jobs/:printJobId/mark-issued",
+      "resolvedPath": "/admin/print-jobs/cmmkiwvce001hg1gb9ex149x3/mark-issued",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "PATCH",
+      "route": "/admin/print-jobs/:printJobId/status",
+      "resolvedPath": "/admin/print-jobs/cmmkiwvce001hg1gb9ex149x3/status",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/print-jobs/dispatch",
+      "resolvedPath": "/admin/print-jobs/dispatch",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/print-jobs/reprint",
+      "resolvedPath": "/admin/print-jobs/reprint",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/render-batches/:batchId",
+      "resolvedPath": "/admin/render-batches/batchId_test_id",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/render-batches/:batchId/export",
+      "resolvedPath": "/admin/render-batches/batchId_test_id/export",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/reports/schools",
+      "resolvedPath": "/admin/reports/schools",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/reports/schools.csv",
+      "resolvedPath": "/admin/reports/schools.csv",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/review-queue",
+      "resolvedPath": "/admin/review-queue",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/sales-assignments",
+      "resolvedPath": "/admin/sales-assignments",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/sales-assignments",
+      "resolvedPath": "/admin/sales-assignments",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "DELETE",
+      "route": "/admin/sales-assignments/:assignmentId",
+      "resolvedPath": "/admin/sales-assignments/assignment_fake_id",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "PATCH",
+      "route": "/admin/schools/:schoolId",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/schools/:schoolId/approval-chains",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/approval-chains",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/schools/:schoolId/approval-chains",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/approval-chains",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/schools/:schoolId/audit-logs",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/audit-logs",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/schools/:schoolId/classes",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/classes",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/schools/:schoolId/detail",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/detail",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/schools/:schoolId/render-batches",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/render-batches",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/schools/:schoolId/students",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/students",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/schools/:schoolId/template-assignments",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/template-assignments",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/schools/:schoolId/template-assignments",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/template-assignments",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/schools/:schoolId/template-resolver",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/template-resolver",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/schools/:schoolId/templates",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/templates",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/schools/:schoolId/templates",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/templates",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/schools/:schoolId/users",
+      "resolvedPath": "/admin/schools/cmmkl6bxs000zqrg58duc5m88/users",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "PATCH",
+      "route": "/admin/students/:studentId",
+      "resolvedPath": "/admin/students/student_test_id",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/students/:studentId/approval-workflow/start",
+      "resolvedPath": "/admin/students/student_test_id/approval-workflow/start",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "PATCH",
+      "route": "/admin/students/:studentId/correction",
+      "resolvedPath": "/admin/students/student_test_id/correction",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/students/:studentId/corrections",
+      "resolvedPath": "/admin/students/student_test_id/corrections",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/students/:studentId/handoff",
+      "resolvedPath": "/admin/students/student_test_id/handoff",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/students/:studentId/merge-duplicate",
+      "resolvedPath": "/admin/students/student_test_id/merge-duplicate",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/students/:studentId/photo-replace",
+      "resolvedPath": "/admin/students/student_test_id/photo-replace",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/students/:studentId/reissue-request",
+      "resolvedPath": "/admin/students/student_test_id/reissue-request",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/students/:studentId/validate",
+      "resolvedPath": "/admin/students/student_test_id/validate",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/template-tokens",
+      "resolvedPath": "/admin/template-tokens",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/templates/:templateId",
+      "resolvedPath": "/admin/templates/template_test_id",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/templates/:templateId/activate",
+      "resolvedPath": "/admin/templates/template_test_id/activate",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/templates/:templateId/archive",
+      "resolvedPath": "/admin/templates/template_test_id/archive",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/templates/:templateId/bind-campaign",
+      "resolvedPath": "/admin/templates/template_test_id/bind-campaign",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/templates/:templateId/duplicate",
+      "resolvedPath": "/admin/templates/template_test_id/duplicate",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "PATCH",
+      "route": "/admin/templates/:templateId/mapping",
+      "resolvedPath": "/admin/templates/template_test_id/mapping",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/templates/:templateId/rebind-proofs",
+      "resolvedPath": "/admin/templates/template_test_id/rebind-proofs",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/templates/:templateId/render-batches",
+      "resolvedPath": "/admin/templates/template_test_id/render-batches",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/templates/:templateId/render-preview",
+      "resolvedPath": "/admin/templates/template_test_id/render-preview",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/templates/:templateId/snapshots",
+      "resolvedPath": "/admin/templates/template_test_id/snapshots",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "PATCH",
+      "route": "/admin/templates/:templateId/status",
+      "resolvedPath": "/admin/templates/template_test_id/status",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/admin/users",
+      "resolvedPath": "/admin/users",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/admin/users",
+      "resolvedPath": "/admin/users",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "DELETE",
+      "route": "/admin/users/:userId",
+      "resolvedPath": "/admin/users/user_fake_id",
+      "status": 404,
+      "ok": true,
+      "source": "apps/api/src/modules/admin/admin.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/company/login",
+      "resolvedPath": "/auth/company/login",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/forgot-password",
+      "resolvedPath": "/auth/forgot-password",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/login",
+      "resolvedPath": "/auth/login",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/logout",
+      "resolvedPath": "/auth/logout",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/auth/me",
+      "resolvedPath": "/auth/me",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/parent/send-otp",
+      "resolvedPath": "/auth/parent/send-otp",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/parent/verify-otp",
+      "resolvedPath": "/auth/parent/verify-otp",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/refresh",
+      "resolvedPath": "/auth/refresh",
+      "status": 401,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/reset-password",
+      "resolvedPath": "/auth/reset-password",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/school/login",
+      "resolvedPath": "/auth/school/login",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/billing/invoices",
+      "resolvedPath": "/billing/invoices",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/billing/billing.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/billing/invoices",
+      "resolvedPath": "/billing/invoices",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/billing/billing.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/billing/payments",
+      "resolvedPath": "/billing/payments",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/billing/billing.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/billing/razorpay/order",
+      "resolvedPath": "/billing/razorpay/order",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/billing/billing.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/billing/razorpay/verify",
+      "resolvedPath": "/billing/razorpay/verify",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/billing/billing.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/billing/reconciliation",
+      "resolvedPath": "/billing/reconciliation",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/billing/billing.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/campaigns",
+      "resolvedPath": "/campaigns",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/schools/schools.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/campaigns/token/:token",
+      "resolvedPath": "/campaigns/token/demo-school-2026",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/schools/schools.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/dashboard/summary",
+      "resolvedPath": "/dashboard/summary",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/dashboard/dashboard.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/intake-links",
+      "resolvedPath": "/intake-links",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/schools/schools.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/intake-links/token/:token",
+      "resolvedPath": "/intake-links/token/demo-school-2026",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/schools/schools.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/parent/photo/analyze",
+      "resolvedPath": "/parent/photo/analyze",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/parent/parent.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/parent/submissions",
+      "resolvedPath": "/parent/submissions",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/parent/parent.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/parent/submissions",
+      "resolvedPath": "/parent/submissions",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/parent/parent.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/async-jobs",
+      "resolvedPath": "/platform/async-jobs",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/async-jobs",
+      "resolvedPath": "/platform/async-jobs",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/async-jobs/:jobId/process",
+      "resolvedPath": "/platform/async-jobs/cmnab2w8800113jn5kfs713ze/process",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/digital-id/generate",
+      "resolvedPath": "/platform/digital-id/generate",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/digital-id/scan",
+      "resolvedPath": "/platform/digital-id/scan",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/digital-id/verify",
+      "resolvedPath": "/platform/digital-id/verify",
+      "status": 403,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/reports/enterprise",
+      "resolvedPath": "/platform/reports/enterprise",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/security/assets/:token",
+      "resolvedPath": "/platform/security/assets/invalid-signed-token",
+      "status": 403,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/security/assets/signed-url",
+      "resolvedPath": "/platform/security/assets/signed-url",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/security/auth-anomalies",
+      "resolvedPath": "/platform/security/auth-anomalies",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/security/event-feed",
+      "resolvedPath": "/platform/security/event-feed",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/security/generated-artifacts/:token",
+      "resolvedPath": "/platform/security/generated-artifacts/demo-school-2026",
+      "status": 403,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/security/generated-artifacts/signed-url",
+      "resolvedPath": "/platform/security/generated-artifacts/signed-url",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/security/mask-policies",
+      "resolvedPath": "/platform/security/mask-policies",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/security/mask-policies",
+      "resolvedPath": "/platform/security/mask-policies",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/security/retention/purge",
+      "resolvedPath": "/platform/security/retention/purge",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/security/retention/summary",
+      "resolvedPath": "/platform/security/retention/summary",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/security/revoke-sessions",
+      "resolvedPath": "/platform/security/revoke-sessions",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/templates/color-profile",
+      "resolvedPath": "/platform/templates/color-profile",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/platform/workflow-rules",
+      "resolvedPath": "/platform/workflow-rules",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/workflow-rules",
+      "resolvedPath": "/platform/workflow-rules",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "PATCH",
+      "route": "/platform/workflow-rules/:ruleId",
+      "resolvedPath": "/platform/workflow-rules/cmnab2w8d00153jn50goe2pc4",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/platform/workflow-rules/:ruleId/apply",
+      "resolvedPath": "/platform/workflow-rules/cmnab2w8d00153jn50goe2pc4/apply",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/platform/platform.controller.ts"
+    },
+    {
+      "method": "GET",
+      "route": "/schools",
+      "resolvedPath": "/schools",
+      "status": 200,
+      "ok": true,
+      "source": "apps/api/src/modules/schools/schools.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/schools",
+      "resolvedPath": "/schools",
+      "status": 400,
+      "ok": true,
+      "source": "apps/api/src/modules/schools/schools.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/schools/:schoolId/campaigns",
+      "resolvedPath": "/schools/cmmkl6bxs000zqrg58duc5m88/campaigns",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/schools/schools.controller.ts"
+    },
+    {
+      "method": "POST",
+      "route": "/schools/:schoolId/intake-links",
+      "resolvedPath": "/schools/cmmkl6bxs000zqrg58duc5m88/intake-links",
+      "status": 201,
+      "ok": true,
+      "source": "apps/api/src/modules/schools/schools.controller.ts"
+    }
+  ],
+  "failures": [],
+  "summary": {
+    "webPass": 7,
+    "webTotal": 7,
+    "authPass": 6,
+    "authTotal": 6,
+    "flowPass": 6,
+    "flowTotal": 6,
+    "apiPass": 115,
+    "apiTotal": 115,
+    "totalChecks": 134,
+    "totalPass": 134,
+    "totalFail": 0
+  },
+  "context": {
+    "intakeToken": "demo-school-2026",
+    "schoolId": "cmmkl6bxs000zqrg58duc5m88",
+    "studentId": null,
+    "userId": "cmmkkpqa00005289sbog3s80k",
+    "assignmentId": null,
+    "printJobId": "cmmkiwvce001hg1gb9ex149x3",
+    "workflowId": "cmn9yh7fq00d2dum2sa9zeffp",
+    "chainId": null,
+    "templateId": null,
+    "ruleId": "cmnab2w8d00153jn50goe2pc4",
+    "jobId": "cmnab2w8800113jn5kfs713ze",
+    "invoiceId": "cmnab2w82000x3jn5p9udwjao"
+  },
+  "completedAt": "2026-03-28T12:27:57.449Z"
+}
