@@ -31,6 +31,8 @@ type RoleKey =
   | "PARENT";
 
 type SchoolStatus = "ACTIVE" | "INACTIVE";
+type InstitutionType = "SCHOOL" | "COLLEGE" | "COMPANY" | "COACHING_INSTITUTE";
+type IntakeAudience = "PARENT" | "STUDENT" | "EMPLOYEE";
 type StudentStatus =
   | "DRAFT"
   | "SUBMITTED"
@@ -41,7 +43,7 @@ type StudentStatus =
   | "DELIVERED"
   | "REJECTED";
 
-type TabKey = "overview" | "students" | "intake-links" | "invoices" | "audit";
+type TabKey = "overview" | "students" | "campaigns" | "invoices" | "audit";
 
 type SchoolDetailStudent = {
   id: string;
@@ -71,6 +73,7 @@ type SchoolDetailResponse = {
     principalPhone?: string | null;
     status?: SchoolStatus;
     salesOwnerId?: string | null;
+    institutionType?: InstitutionType;
     createdAt: string;
   };
   stats: {
@@ -104,6 +107,12 @@ type SchoolStudentListResponse = {
   rows: SchoolDetailStudent[];
 };
 
+type StudentExportResponse = {
+  fileName: string;
+  columns: Array<{ key: string; label: string }>;
+  rows: Array<Record<string, string | number | null>>;
+};
+
 type ClassSummaryRow = {
   className: string;
   section: string;
@@ -117,16 +126,81 @@ type ClassSummaryRow = {
   rejected: number;
 };
 
-type IntakeLinkRow = {
+type CampaignLinkRow = {
   id: string;
   token: string;
   className: string;
   section: string;
+  segmentKey: string;
+  segmentLabel: string;
+  primaryLabel: string;
+  primaryValue: string;
+  secondaryLabel?: string | null;
+  secondaryValue?: string | null;
+  expectedVolume: number;
   maxStudentsPerParent: number;
   photoBgPreference: string;
   expiresAt: string;
   createdAt: string;
   isActive: boolean;
+  submitted: number;
+  approved: number;
+  rejected: number;
+  pending: number;
+};
+
+type CampaignSegmentRow = {
+  segmentKey: string;
+  label: string;
+  primaryLabel: string;
+  primaryValue: string;
+  secondaryLabel?: string | null;
+  secondaryValue?: string | null;
+  expectedVolume: number;
+  submitted: number;
+  approved: number;
+  rejected: number;
+  pending: number;
+  links: CampaignLinkRow[];
+};
+
+type IntakeCampaignRow = {
+  id: string;
+  schoolId: string;
+  name: string;
+  institutionType: InstitutionType;
+  audience: IntakeAudience;
+  className?: string;
+  section?: string;
+  photoBgPreference?: string;
+  maxExpectedVolume: number;
+  startsAt: string;
+  expiresAt: string;
+  isActive: boolean;
+  dataSchema: Record<string, boolean>;
+  submissionModel: {
+    mode?: string;
+    requirePhotoStandardization?: boolean;
+    requireParentOtp?: boolean;
+    distributionChannels?: string[];
+    bulkUploadEnabled?: boolean;
+    intakeLinkOptional?: boolean;
+    workflowRequired?: boolean;
+  };
+  approvalRules: {
+    approvalRequired?: boolean;
+  };
+  metadata: Record<string, string | boolean | number | null>;
+  targetSegments: CampaignSegmentRow[];
+  links: CampaignLinkRow[];
+  totals: {
+    generatedLinks: number;
+    expected: number;
+    submitted: number;
+    approved: number;
+    rejected: number;
+    pending: number;
+  };
 };
 
 type InvoiceRow = {
@@ -177,18 +251,47 @@ type AuditRow = {
   actorUser?: { id: string; email: string; role: string } | null;
 };
 
-type IntakeLinkForm = {
-  className: string;
-  section: string;
+type CampaignForm = {
+  campaignName: string;
+  institutionType: InstitutionType;
+  maxExpectedVolume: string;
+  startsAt: string;
+  expiresAt: string;
+  dataSchema: {
+    fullName: boolean;
+    photo: boolean;
+    className: boolean;
+    division: boolean;
+    rollNumber: boolean;
+    dob: boolean;
+    bloodGroup: boolean;
+    parentName: boolean;
+    mobileNumber: boolean;
+    emergencyNumber: boolean;
+    fullAddress: boolean;
+    aadhaarNumber: boolean;
+  };
+  submissionModel: {
+    mode: string;
+    actorType: "PARENT" | "STUDENT" | "STAFF";
+    requirePhotoStandardization: boolean;
+    requireParentOtp: boolean;
+    distributionChannels: string[];
+    bulkUploadEnabled: boolean;
+    intakeLinkOptional: boolean;
+    workflowRequired: boolean;
+    allowMobileEditAfterVerification: boolean;
+    duplicatePolicy: "ONE_PER_CAMPAIGN" | "ONE_PER_STUDENT" | "ALLOW_MULTIPLE";
+  };
+  approvalRequired: boolean;
   maxStudentsPerParent: string;
   photoBgPreference: string;
-  expiresAt: string;
 };
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" },
   { key: "students", label: "Students" },
-  { key: "intake-links", label: "Intake Links" },
+  { key: "campaigns", label: "Intake Campaigns" },
   { key: "invoices", label: "Invoices" },
   { key: "audit", label: "Audit" }
 ];
@@ -202,6 +305,24 @@ const WORKFLOW_STATUSES: StudentStatus[] = [
   "PRINTED",
   "DELIVERED",
   "REJECTED"
+];
+
+const DATA_SCHEMA_FIELDS: Array<{
+  key: keyof CampaignForm["dataSchema"];
+  label: string;
+  locked?: boolean;
+}> = [
+  { key: "fullName", label: "Full Name", locked: true },
+  { key: "className", label: "Class / Department" },
+  { key: "division", label: "Division / Year" },
+  { key: "rollNumber", label: "Roll Number" },
+  { key: "dob", label: "DOB" },
+  { key: "bloodGroup", label: "Blood Group" },
+  { key: "parentName", label: "Parent Name" },
+  { key: "mobileNumber", label: "Mobile Number" },
+  { key: "emergencyNumber", label: "Emergency Number" },
+  { key: "fullAddress", label: "Full Address" },
+  { key: "aadhaarNumber", label: "Aadhaar Number" }
 ];
 
 export default function SchoolDrillPage() {
@@ -237,14 +358,9 @@ export default function SchoolDrillPage() {
   const [studentStatus, setStudentStatus] = useState<StudentStatus | "">("");
   const [studentsPage, setStudentsPage] = useState(1);
 
-  const [links, setLinks] = useState<IntakeLinkRow[]>([]);
-  const [linkForm, setLinkForm] = useState<IntakeLinkForm>({
-    className: "ALL",
-    section: "ALL",
-    maxStudentsPerParent: "3",
-    photoBgPreference: "WHITE",
-    expiresAt: ""
-  });
+  const [campaigns, setCampaigns] = useState<IntakeCampaignRow[]>([]);
+  const [campaignForm, setCampaignForm] = useState<CampaignForm>(() => buildCampaignForm("SCHOOL"));
+  const [campaignStep, setCampaignStep] = useState<1 | 2>(1);
 
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [recon, setRecon] = useState<BillingReconciliation | null>(null);
@@ -260,14 +376,33 @@ export default function SchoolDrillPage() {
     detail: true,
     saveSchool: false,
     students: false,
+    studentExport: false,
     classSummary: false,
     studentUpdate: "",
-    links: false,
-    linkCreate: false,
+    campaigns: false,
+    campaignCreate: false,
     invoices: false,
     recon: false,
     audits: false
   });
+
+  const publicOrigin = useMemo(
+    () => (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"),
+    []
+  );
+  const validCampaigns = useMemo(
+    () =>
+      campaigns.filter((campaign) =>
+        campaign.targetSegments.some(
+          (segment) =>
+            !!segment.primaryValue?.trim() &&
+            !["na", "n/a"].includes(segment.primaryValue.trim().toLowerCase()) &&
+            !!segment.label?.trim() &&
+            !segment.label.toLowerCase().includes("pending")
+        )
+      ),
+    [campaigns]
+  );
 
   useEffect(() => {
     const r = (localStorage.getItem("company_role") || "SUPER_ADMIN") as RoleKey;
@@ -344,7 +479,7 @@ export default function SchoolDrillPage() {
         loadDetail(),
         loadClassSummary(),
         loadStudents(1),
-        loadLinks(),
+        loadCampaigns(),
         loadInvoices(),
         loadReconciliation(),
         loadAudits(1)
@@ -368,6 +503,11 @@ export default function SchoolDrillPage() {
       state: res.school.state || "",
       status: res.school.status || "ACTIVE"
     });
+    setCampaignForm((prev) =>
+      !prev.campaignName
+        ? buildCampaignForm((res.school.institutionType || "SCHOOL") as InstitutionType, res.school.name)
+        : prev
+    );
   }
 
   async function saveSchool() {
@@ -450,42 +590,127 @@ export default function SchoolDrillPage() {
     }
   }
 
-  async function loadLinks() {
-    setLoading((p) => ({ ...p, links: true }));
+  async function loadCampaigns() {
+    setLoading((p) => ({ ...p, campaigns: true }));
     try {
-      setLinks(await apiRequest<IntakeLinkRow[]>(`/intake-links?schoolId=${encodeURIComponent(schoolId)}`));
+      const rows = await apiRequest<IntakeCampaignRow[]>(`/campaigns?schoolId=${encodeURIComponent(schoolId)}`);
+      setCampaigns(
+        rows.map((campaign) => ({
+          ...campaign,
+          className: campaign.name,
+          section: formatInstitutionLabel(campaign.institutionType),
+          photoBgPreference: formatAudienceLabel(campaign.audience),
+          targetSegments: campaign.targetSegments.filter(
+            (segment) =>
+              !!segment.primaryValue?.trim() &&
+              !["na", "n/a"].includes(segment.primaryValue.trim().toLowerCase()) &&
+              !!segment.label?.trim() &&
+              !segment.label.toLowerCase().includes("pending")
+          )
+        }))
+      );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load intake links");
+      setError(e instanceof Error ? e.message : "Failed to load intake campaigns");
       clearFlash();
     } finally {
-      setLoading((p) => ({ ...p, links: false }));
+      setLoading((p) => ({ ...p, campaigns: false }));
     }
   }
 
-  async function createLink() {
-    setLoading((p) => ({ ...p, linkCreate: true }));
+  async function createCampaign() {
+    if (!campaignForm.campaignName.trim()) {
+      setError("Campaign name is required.");
+      clearFlash();
+      return;
+    }
+    if (!campaignForm.startsAt || !campaignForm.expiresAt) {
+      setError("Start and expiry dates are required.");
+      clearFlash();
+      return;
+    }
+
+    const expectedVolume = Number(campaignForm.maxExpectedVolume || "0") || 0;
+    setLoading((p) => ({ ...p, campaignCreate: true }));
     try {
-      const created = await apiRequest<IntakeLinkRow>(`/schools/${encodeURIComponent(schoolId)}/intake-links`, {
+      await apiRequest(`/schools/${encodeURIComponent(schoolId)}/campaigns`, {
         method: "POST",
         body: JSON.stringify({
-          className: linkForm.className || "ALL",
-          section: linkForm.section || "ALL",
-          maxStudentsPerParent: Number(linkForm.maxStudentsPerParent || "3"),
-          photoBgPreference: linkForm.photoBgPreference || "WHITE",
-          expiresAt: linkForm.expiresAt || undefined
+          campaignName: campaignForm.campaignName.trim(),
+          institutionType: campaignForm.institutionType,
+          targetSegments: [
+            {
+              primaryValue: "ALL",
+              secondaryValue: "ALL",
+              expectedVolume
+            }
+          ],
+          maxExpectedVolume: expectedVolume || undefined,
+          startsAt: campaignForm.startsAt || undefined,
+          expiresAt: campaignForm.expiresAt || undefined,
+          dataSchema: {
+            ...campaignForm.dataSchema,
+            fullName: true,
+            photo: true
+          },
+          submissionModel: campaignForm.submissionModel,
+          approvalRules: {
+            approvalRequired: campaignForm.approvalRequired
+          },
+          maxStudentsPerParent: Number(campaignForm.maxStudentsPerParent || "3"),
+          photoBgPreference: campaignForm.photoBgPreference
         })
       });
-      setLinks((prev) => [created, ...prev]);
-      setSuccess("Intake link created.");
-      await loadDetail();
-      await loadAudits(1);
+      setSuccess("Campaign created and child intake links generated.");
+      setCampaignForm(buildCampaignForm(campaignForm.institutionType, detail?.school.name || ""));
+      setCampaignStep(1);
+      await Promise.all([loadCampaigns(), loadDetail(), loadAudits(1)]);
       clearFlash();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create intake link");
+      setError(e instanceof Error ? e.message : "Failed to create intake campaign");
       clearFlash();
     } finally {
-      setLoading((p) => ({ ...p, linkCreate: false }));
+      setLoading((p) => ({ ...p, campaignCreate: false }));
     }
+  }
+
+  function updateCampaignInstitution(institutionType: InstitutionType) {
+    setCampaignForm((prev) => {
+      const next = buildCampaignForm(institutionType, detail?.school.name || "");
+      return {
+        ...next,
+        campaignName: prev.campaignName || next.campaignName,
+        startsAt: prev.startsAt || next.startsAt,
+        expiresAt: prev.expiresAt || next.expiresAt
+      };
+    });
+    setCampaignStep(1);
+  }
+
+  function advanceCampaignStep() {
+    if (campaignStep === 1) {
+      if (!campaignForm.campaignName.trim()) {
+        setError("Campaign name is required.");
+        clearFlash();
+        return;
+      }
+      if (!campaignForm.startsAt || !campaignForm.expiresAt) {
+        setError("Start and expiry dates are required.");
+        clearFlash();
+        return;
+      }
+      setCampaignStep(2);
+    }
+  }
+
+  function toggleSchemaField(field: keyof CampaignForm["dataSchema"]) {
+    if (field === "fullName") return;
+    setCampaignForm((prev) => ({
+      ...prev,
+      dataSchema: {
+        ...prev.dataSchema,
+        [field]: !prev.dataSchema[field]
+      }
+    }));
   }
 
   async function loadInvoices() {
@@ -572,6 +797,64 @@ export default function SchoolDrillPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function exportStudentsCsv() {
+    setLoading((prev) => ({ ...prev, studentExport: true }));
+    try {
+      const query = new URLSearchParams();
+      if (studentQuery.trim()) query.set("q", studentQuery.trim());
+      if (studentStatus) query.set("status", studentStatus);
+      if (classFilter.trim()) query.set("className", classFilter.trim());
+
+      const exportData = await apiRequest<StudentExportResponse>(
+        `/admin/schools/${encodeURIComponent(schoolId)}/students/export${query.toString() ? `?${query.toString()}` : ""}`
+      );
+
+      const photoKeys = Array.from(
+        new Set(
+          exportData.rows
+            .map((row) => (typeof row.photoKey === "string" ? row.photoKey.trim() : ""))
+            .filter(Boolean)
+        )
+      );
+
+      const signedPhotoLinks = new Map<string, string>();
+      await Promise.allSettled(
+        photoKeys.map(async (photoKey) => {
+          const signed = await apiRequest<{ signedUrl: string }>(
+            `/platform/security/assets/signed-url?photoKey=${encodeURIComponent(photoKey)}&ttlSeconds=86400`
+          );
+          signedPhotoLinks.set(photoKey, signed.signedUrl);
+        })
+      );
+
+      const rows: Array<Record<string, string | number | null>> = exportData.rows.map((row) => {
+        const photoKey = typeof row.photoKey === "string" ? row.photoKey.trim() : "";
+        return {
+          ...row,
+          photoLink: photoKey ? signedPhotoLinks.get(photoKey) || "" : ""
+        };
+      });
+
+      exportCsv(
+        exportData.fileName,
+        exportData.columns.map((column) => column.label),
+        rows.map((row) =>
+          exportData.columns.map((column) => {
+            const value = row[column.key];
+            return typeof value === "number" ? value : String(value ?? "");
+          })
+        )
+      );
+      setSuccess("Student export ready.");
+      clearFlash();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to export students");
+      clearFlash();
+    } finally {
+      setLoading((prev) => ({ ...prev, studentExport: false }));
+    }
+  }
+
   if (booting || loading.detail) {
     return <SchoolLoader />;
   }
@@ -647,7 +930,7 @@ export default function SchoolDrillPage() {
                 <div className="mt-3 grid gap-2 md:grid-cols-4">
                   <MiniStat label="Total Students" value={fmtInt(detail.stats.totalStudents)} />
                   <MiniStat label="Parents" value={fmtInt(detail.stats.parents)} />
-                  <MiniStat label="Intake Links" value={fmtInt(detail.stats.intakeLinks)} />
+                  <MiniStat label="Generated Links" value={fmtInt(detail.stats.intakeLinks)} />
                   <MiniStat label="Invoice Total" value={`INR ${fmtMoney(detail.stats.invoiceTotal)}`} />
                 </div>
                 <div className="mt-3 grid gap-2 md:grid-cols-4">
@@ -864,24 +1147,13 @@ export default function SchoolDrillPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      exportCsv(
-                        `${detail.school.code}-students`,
-                        ["Name", "Class", "Section", "Parent", "Mobile", "Status", "Created"],
-                        (students?.rows || []).map((r) => [
-                          r.fullName,
-                          r.className || "",
-                          r.section || "",
-                          r.parentName || "",
-                          r.parentMobile || "",
-                          r.status,
-                          formatDateTime(r.createdAt)
-                        ])
-                      )
-                    }
+                    onClick={() => void exportStudentsCsv()}
+                    disabled={loading.studentExport}
                     className="rounded-lg border border-[var(--line-soft)] px-2 py-1 text-xs hover-glow"
                   >
-                    <span className="inline-flex items-center gap-1"><Download size={12} /> CSV</span>
+                    <span className="inline-flex items-center gap-1">
+                      <Download size={12} /> {loading.studentExport ? "Preparing..." : "CSV"}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -959,72 +1231,209 @@ export default function SchoolDrillPage() {
             </article>
           ) : null}
 
-          {tab === "intake-links" ? (
-            <div className="grid gap-4 lg:grid-cols-[1.05fr_1fr]">
-              <article className="glass p-4">
-                <p className="m-0 text-sm font-semibold">Create Intake Link</p>
-                <div className="mt-3 grid gap-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <InputField label="Class" value={linkForm.className} onChange={(v) => setLinkForm((p) => ({ ...p, className: v }))} />
-                    <InputField label="Section" value={linkForm.section} onChange={(v) => setLinkForm((p) => ({ ...p, section: v }))} />
+          {tab === "campaigns" ? (
+            <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+              <article className="glass space-y-4 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="m-0 text-sm font-semibold">Create Intake Campaign</p>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">
+                      A compact 2-step workflow for OTP-first intake collection.
+                    </p>
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <InputField
-                      label="Max Students"
-                      value={linkForm.maxStudentsPerParent}
-                      onChange={(v) => setLinkForm((p) => ({ ...p, maxStudentsPerParent: v }))}
-                    />
-                    <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
-                      <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Photo BG</span>
-                      <select
-                        value={linkForm.photoBgPreference}
-                        onChange={(e) => setLinkForm((p) => ({ ...p, photoBgPreference: e.target.value }))}
-                        className="w-full bg-transparent outline-none"
+                  <div className="flex items-center gap-2 text-[11px]">
+                    {[1, 2].map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setCampaignStep(value as 1 | 2)}
+                        className={`rounded-full border px-3 py-1 ${
+                          campaignStep === value
+                            ? "border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] text-white"
+                            : "border-[var(--line-soft)] text-[var(--text-muted)]"
+                        }`}
                       >
-                        <option value="WHITE">WHITE</option>
-                        <option value="LIGHT_BLUE">LIGHT_BLUE</option>
-                        <option value="NONE">NONE</option>
-                      </select>
-                    </label>
-                    <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
-                      <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Expires</span>
-                      <input
-                        type="date"
-                        value={linkForm.expiresAt}
-                        onChange={(e) => setLinkForm((p) => ({ ...p, expiresAt: e.target.value }))}
-                        className="w-full bg-transparent outline-none"
-                      />
-                    </label>
+                        Step {value}
+                      </button>
+                    ))}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void createLink()}
-                    disabled={loading.linkCreate}
-                    className="rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
-                  >
-                    {loading.linkCreate ? "Creating..." : "Create Link"}
+                </div>
+
+                {campaignStep === 1 ? (
+                  <div className="space-y-3 rounded-2xl border border-[var(--line-soft)] p-3">
+                    <p className="m-0 text-xs font-semibold">Step 1: Campaign Basics</p>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <InputField label="Campaign Name" value={campaignForm.campaignName} onChange={(value) => setCampaignForm((prev) => ({ ...prev, campaignName: value }))} />
+                      <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
+                        <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Institution Type</span>
+                        <select value={campaignForm.institutionType} onChange={(e) => updateCampaignInstitution(e.target.value as InstitutionType)} className="w-full bg-transparent outline-none">
+                          <option value="SCHOOL">School</option>
+                          <option value="COLLEGE">College</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-4">
+                      <InputField label="Start Date" value={campaignForm.startsAt} onChange={(value) => setCampaignForm((prev) => ({ ...prev, startsAt: value }))} type="date" />
+                      <InputField label="Expiry Date" value={campaignForm.expiresAt} onChange={(value) => setCampaignForm((prev) => ({ ...prev, expiresAt: value }))} type="date" />
+                      <InputField label="Max Expected Volume" value={campaignForm.maxExpectedVolume} onChange={(value) => setCampaignForm((prev) => ({ ...prev, maxExpectedVolume: value }))} type="number" />
+                      <InputField label="Max Records / Link" value={campaignForm.maxStudentsPerParent} onChange={(value) => setCampaignForm((prev) => ({ ...prev, maxStudentsPerParent: value }))} type="number" />
+                    </div>
+                  </div>
+                ) : null}
+
+                {false ? (
+                  <div className="space-y-3 rounded-2xl border border-[var(--line-soft)] p-3">
+                    <p className="m-0 text-xs text-[var(--text-muted)]">
+                      Segment configuration has been removed from this flow.
+                    </p>
+                  </div>
+                ) : null}
+
+                {campaignStep === 2 ? (
+                  <div className="space-y-3 rounded-2xl border border-[var(--line-soft)] p-3">
+                    <div>
+                      <p className="m-0 text-xs font-semibold">Step 2: Data Schema + Submission Rules</p>
+                      <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">
+                        Select only the fields that should appear in the intake form. Full name stays on, and photo capture or upload stays mandatory.
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs text-[var(--text-muted)]">
+                      A single secure intake link will be generated for this campaign. Class and division can now be captured directly inside the intake form instead of creating segment rows here.
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <span className="rounded-full border border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] px-3 py-2 text-xs text-white">
+                        Full Name
+                      </span>
+                      <span className="rounded-full border border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] px-3 py-2 text-xs text-white">
+                        Photo Capture / Upload Mandatory
+                      </span>
+                      {DATA_SCHEMA_FIELDS.filter((field) => field.key !== "fullName" && !(campaignForm.institutionType === "COLLEGE" && field.key === "parentName")).map((field) => (
+                        <button
+                          key={field.key}
+                          type="button"
+                          onClick={() => toggleSchemaField(field.key)}
+                          className={`rounded-full border px-3 py-2 text-xs ${
+                            campaignForm.dataSchema[field.key]
+                              ? "border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] text-white"
+                              : "border-[var(--line-soft)] text-[var(--text-muted)]"
+                          }`}
+                        >
+                          {field.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
+                        <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Actor Type</span>
+                        <p className="m-0 font-semibold">{campaignForm.submissionModel.actorType}</p>
+                      </div>
+                      <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
+                        <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Background Rule</span>
+                        <select value={campaignForm.photoBgPreference} onChange={(e) => setCampaignForm((prev) => ({ ...prev, photoBgPreference: e.target.value }))} className="w-full bg-transparent outline-none">
+                          <option value="PLAIN">PLAIN</option>
+                          <option value="LIGHT">LIGHT</option>
+                          <option value="NONE">NONE</option>
+                        </select>
+                      </label>
+                      <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
+                        <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Mode</span>
+                        <select value={campaignForm.submissionModel.mode} onChange={(e) => setCampaignForm((prev) => ({ ...prev, submissionModel: { ...prev.submissionModel, mode: e.target.value } }))} className="w-full bg-transparent outline-none">
+                          {getSubmissionModes(campaignForm.institutionType).map((mode) => (
+                            <option key={mode.value} value={mode.value}>{mode.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
+                        <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Duplicate Policy</span>
+                        <select
+                          value={campaignForm.submissionModel.duplicatePolicy}
+                          onChange={(e) =>
+                            setCampaignForm((prev) => ({
+                              ...prev,
+                              submissionModel: {
+                                ...prev.submissionModel,
+                                duplicatePolicy: e.target.value as CampaignForm["submissionModel"]["duplicatePolicy"]
+                              }
+                            }))
+                          }
+                          className="w-full bg-transparent outline-none"
+                        >
+                          <option value="ONE_PER_STUDENT">One per mobile per student</option>
+                          <option value="ONE_PER_CAMPAIGN">One per mobile per campaign</option>
+                          <option value="ALLOW_MULTIPLE">Allow multiple submissions</option>
+                        </select>
+                      </label>
+                      <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs text-[var(--text-muted)]">
+                        Mobile OTP verification is always required before the form opens.
+                      </div>
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <ToggleRow label="Photo Standardization" checked={campaignForm.submissionModel.requirePhotoStandardization} onChange={() => setCampaignForm((prev) => ({ ...prev, submissionModel: { ...prev.submissionModel, requirePhotoStandardization: !prev.submissionModel.requirePhotoStandardization } }))} />
+                      <ToggleRow label="Workflow Required" checked={campaignForm.submissionModel.workflowRequired} onChange={() => setCampaignForm((prev) => ({ ...prev, submissionModel: { ...prev.submissionModel, workflowRequired: !prev.submissionModel.workflowRequired } }))} />
+                      <ToggleRow label="Approval Required" checked={campaignForm.approvalRequired} onChange={() => setCampaignForm((prev) => ({ ...prev, approvalRequired: !prev.approvalRequired }))} />
+                      <ToggleRow
+                        label="Allow Mobile Edit After Verification"
+                        checked={campaignForm.submissionModel.allowMobileEditAfterVerification}
+                        onChange={() =>
+                          setCampaignForm((prev) => ({
+                            ...prev,
+                            submissionModel: {
+                              ...prev.submissionModel,
+                              allowMobileEditAfterVerification: !prev.submissionModel.allowMobileEditAfterVerification
+                            }
+                          }))
+                        }
+                      />
+                      {campaignForm.institutionType === "COLLEGE" ? (
+                        <ToggleRow label="Bulk Upload Enabled" checked={campaignForm.submissionModel.bulkUploadEnabled} onChange={() => setCampaignForm((prev) => ({ ...prev, submissionModel: { ...prev.submissionModel, bulkUploadEnabled: !prev.submissionModel.bulkUploadEnabled } }))} />
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex items-center justify-between gap-2">
+                  <button type="button" onClick={() => setCampaignStep((prev) => (prev > 1 ? ((prev - 1) as 1 | 2) : prev))} disabled={campaignStep === 1} className="rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs disabled:opacity-40">
+                    Back
                   </button>
+                  {campaignStep < 2 ? (
+                    <button type="button" onClick={advanceCampaignStep} className="rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-3 py-2 text-xs font-semibold text-white">
+                      Next
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => void createCampaign()} disabled={loading.campaignCreate} className="rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">
+                      {loading.campaignCreate ? "Creating Campaign..." : "Create Campaign & Generate Links"}
+                    </button>
+                  )}
                 </div>
               </article>
 
-              <article className="glass p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="m-0 text-sm font-semibold">Intake Links</p>
+              <article className="space-y-4">
+                <div className="glass p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="m-0 text-sm font-semibold">Live Intake Control Center</p>
+                      <p className="m-0 mt-1 text-xs text-[var(--text-muted)]">
+                        Every campaign shows expected, submitted, approved, rejected, and pending counts per segment.
+                      </p>
+                    </div>
                   <button
                     type="button"
                     onClick={() =>
                       exportCsv(
-                        `${detail.school.code}-intake-links`,
-                        ["Token", "Class", "Section", "BG", "Max Students", "Expires", "Active"],
-                        links.map((l) => [
-                          l.token,
-                          l.className,
-                          l.section,
-                          l.photoBgPreference,
-                          l.maxStudentsPerParent,
-                          formatDate(l.expiresAt),
-                          l.isActive ? "YES" : "NO"
-                        ])
+                        `${detail.school.code}-campaign-dashboard`,
+                        ["Campaign", "Segment", "Expected", "Submitted", "Approved", "Rejected", "Pending", "Links"],
+                        validCampaigns.flatMap((campaign) =>
+                          campaign.targetSegments.map((segment) => [
+                            campaign.name,
+                            segment.label,
+                            segment.expectedVolume,
+                            segment.submitted,
+                            segment.approved,
+                            segment.rejected,
+                            segment.pending,
+                            segment.links.length
+                          ])
+                        )
                       )
                     }
                     className="rounded-lg border border-[var(--line-soft)] px-2 py-1 text-xs hover-glow"
@@ -1032,19 +1441,27 @@ export default function SchoolDrillPage() {
                     <span className="inline-flex items-center gap-1"><Download size={12} /> CSV</span>
                   </button>
                 </div>
-                {loading.links ? (
-                  <Skeleton className="h-40 rounded-xl" />
-                ) : links.length ? (
+                </div>
+                {loading.campaigns ? (
+                  <Skeleton className="h-56 rounded-xl" />
+                ) : validCampaigns.length ? (
                   <div className="max-h-[24rem] space-y-2 overflow-auto">
-                    {links.map((l) => {
-                      const url = `${window.location.origin}/parent/intake?token=${encodeURIComponent(l.token)}`;
+                    {validCampaigns.map((l) => {
+                      const url = l.links[0]
+                        ? `${publicOrigin}/parent/intake?token=${encodeURIComponent(l.links[0].token)}`
+                        : "";
                       return (
                         <div key={l.id} className="rounded-lg border border-[var(--line-soft)] px-2 py-2 text-xs">
                           <p className="m-0 font-medium">
-                            {l.className}-{l.section} • {l.photoBgPreference}
+                            {(l.targetSegments[0]?.label || "Open Intake Link")} • {l.photoBgPreference}
                           </p>
-                          <p className="m-0 mt-1 text-[var(--text-muted)]">{l.token}</p>
-                          <p className="m-0 mt-1 text-[var(--text-muted)]">Expires {formatDate(l.expiresAt)}</p>
+                          <p className="m-0 mt-1 text-[var(--text-muted)]">
+                            {fmtInt(l.totals.generatedLinks)} links • {fmtInt(l.totals.submitted)} submitted •{" "}
+                            {fmtInt(l.totals.approved)} approved • {fmtInt(l.totals.pending)} pending
+                          </p>
+                          <p className="m-0 mt-1 text-[var(--text-muted)]">
+                            Timeline {formatDate(l.startsAt)} to {formatDate(l.expiresAt)}
+                          </p>
                           <div className="mt-2 flex gap-2">
                             <button
                               type="button"
@@ -1061,12 +1478,45 @@ export default function SchoolDrillPage() {
                               <span className="inline-flex items-center gap-1"><Link2 size={11} /> Open</span>
                             </button>
                           </div>
+                          <div className="mt-3 overflow-auto rounded-xl border border-[var(--line-soft)]">
+                            <table className="w-full min-w-[720px] text-left text-[11px]">
+                              <thead className="bg-[var(--surface-strong)] text-[var(--text-muted)]">
+                                <tr>
+                                  <th className="px-2 py-2">Segment</th>
+                                  <th className="px-2 py-2">Expected</th>
+                                  <th className="px-2 py-2">Submitted</th>
+                                  <th className="px-2 py-2">Approved</th>
+                                  <th className="px-2 py-2">Rejected</th>
+                                  <th className="px-2 py-2">Pending</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {l.targetSegments.map((segment) => (
+                                  <tr key={segment.segmentKey} className="border-t border-[var(--line-soft)]">
+                                    <td className="px-2 py-2">
+                                      <p className="m-0 font-medium">{segment.label}</p>
+                                      <p className="m-0 mt-1 text-[10px] text-[var(--text-muted)]">
+                                        {segment.primaryValue?.toUpperCase() === "ALL"
+                                          ? "Open intake across the selected intake form fields"
+                                          : `${segment.primaryLabel}: ${segment.primaryValue}${segment.secondaryValue ? ` • ${segment.secondaryLabel}: ${segment.secondaryValue}` : ""}`}
+                                      </p>
+                                    </td>
+                                    <td className="px-2 py-2">{fmtInt(segment.expectedVolume)}</td>
+                                    <td className="px-2 py-2">{fmtInt(segment.submitted)}</td>
+                                    <td className="px-2 py-2">{fmtInt(segment.approved)}</td>
+                                    <td className="px-2 py-2">{fmtInt(segment.rejected)}</td>
+                                    <td className="px-2 py-2">{fmtInt(segment.pending)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <EmptyState text="No intake links created yet." />
+                  <EmptyState text="No intake campaigns yet. Create one to auto-generate child links per class or segment." />
                 )}
               </article>
             </div>
@@ -1326,6 +1776,149 @@ function SchoolLoader() {
   );
 }
 
+function buildCampaignForm(institutionType: InstitutionType, schoolName = ""): CampaignForm {
+  const descriptor = getInstitutionDescriptor(institutionType);
+  const now = new Date();
+  const expiry = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const schoolDefaults = institutionType === "SCHOOL";
+  return {
+    campaignName: schoolName ? `${schoolName} ${now.getFullYear()} ${descriptor.label} Drive` : "",
+    institutionType,
+    maxExpectedVolume: "",
+    startsAt: isoDate(now),
+    expiresAt: isoDate(expiry),
+    dataSchema: {
+      fullName: true,
+      photo: true,
+      className: schoolDefaults,
+      division: schoolDefaults,
+      rollNumber: schoolDefaults,
+      dob: schoolDefaults,
+      bloodGroup: schoolDefaults,
+      parentName: institutionType === "SCHOOL",
+      mobileNumber: true,
+      emergencyNumber: schoolDefaults,
+      fullAddress: schoolDefaults,
+      aadhaarNumber: schoolDefaults
+    },
+    submissionModel: {
+      mode: descriptor.defaultMode,
+      actorType: descriptor.actorType,
+      requirePhotoStandardization: true,
+      requireParentOtp: true,
+      distributionChannels: descriptor.defaultChannels,
+      bulkUploadEnabled: institutionType !== "SCHOOL",
+      intakeLinkOptional: institutionType === "COLLEGE",
+      workflowRequired: true,
+      allowMobileEditAfterVerification: false,
+      duplicatePolicy: "ONE_PER_STUDENT"
+    },
+    approvalRequired: true,
+    maxStudentsPerParent: "3",
+    photoBgPreference: "PLAIN"
+  };
+}
+
+function getInstitutionDescriptor(institutionType: InstitutionType) {
+  if (institutionType === "COLLEGE") {
+    return {
+      label: "College",
+      primaryLabel: "Department",
+      secondaryLabel: "Year",
+      audience: "STUDENT" as IntakeAudience,
+      actorType: "STUDENT" as const,
+      defaultMode: "STUDENT_SELF_FILL",
+      defaultChannels: ["WHATSAPP", "SMS"]
+    };
+  }
+  if (institutionType === "COMPANY") {
+    return {
+      label: "Corporate",
+      primaryLabel: "Department",
+      secondaryLabel: "Role",
+      audience: "EMPLOYEE" as IntakeAudience,
+      actorType: "STAFF" as const,
+      defaultMode: "EMPLOYEE_SELF_FILL",
+      defaultChannels: ["EMAIL", "WHATSAPP"]
+    };
+  }
+  if (institutionType === "COACHING_INSTITUTE") {
+    return {
+      label: "Coaching Institute",
+      primaryLabel: "Batch",
+      secondaryLabel: "Section",
+      audience: "STUDENT" as IntakeAudience,
+      actorType: "STUDENT" as const,
+      defaultMode: "STUDENT_SELF_FILL",
+      defaultChannels: ["WHATSAPP", "SMS"]
+    };
+  }
+  return {
+    label: "School",
+    primaryLabel: "Class",
+    secondaryLabel: "Division",
+    audience: "PARENT" as IntakeAudience,
+    actorType: "PARENT" as const,
+    defaultMode: "PARENT_DRIVEN",
+    defaultChannels: ["WHATSAPP", "SMS"]
+  };
+}
+
+function getSubmissionModes(institutionType: InstitutionType) {
+  if (institutionType === "COLLEGE") {
+    return [
+      { value: "STUDENT_SELF_FILL", label: "Student Self-Fill" },
+      { value: "EXCEL_UPLOAD", label: "Excel Upload" }
+    ];
+  }
+  if (institutionType === "COMPANY") {
+    return [
+      { value: "EMPLOYEE_SELF_FILL", label: "Employee Self-Fill" },
+      { value: "BULK_UPLOAD", label: "Bulk Upload" }
+    ];
+  }
+  if (institutionType === "COACHING_INSTITUTE") {
+    return [
+      { value: "STUDENT_SELF_FILL", label: "Student Self-Fill" },
+      { value: "BULK_UPLOAD", label: "Bulk Upload" }
+    ];
+  }
+  return [
+    { value: "PARENT_DRIVEN", label: "Parent Driven" },
+    { value: "SCHOOL_ASSISTED", label: "School Assisted" }
+  ];
+}
+
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+  disabled = false
+}: {
+  label: string;
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      disabled={disabled}
+      className={`flex items-center justify-between rounded-xl border px-3 py-2 text-left text-xs ${
+        checked
+          ? "border-[#1C6ED5] bg-[rgba(28,110,213,0.12)]"
+          : "border-[var(--line-soft)] bg-[var(--surface-strong)]"
+      } disabled:cursor-not-allowed disabled:opacity-50`}
+    >
+      <span>{label}</span>
+      <span className={`rounded-full px-2 py-0.5 text-[10px] ${checked ? "bg-[#1C6ED5] text-white" : "bg-transparent text-[var(--text-muted)]"}`}>
+        {checked ? "YES" : "NO"}
+      </span>
+    </button>
+  );
+}
+
 function InputField({
   label,
   value,
@@ -1348,6 +1941,22 @@ function InputField({
       />
     </label>
   );
+}
+
+function StatusBadge({
+  label,
+  tone
+}: {
+  label: string;
+  tone: "good" | "info" | "muted";
+}) {
+  const toneClass =
+    tone === "good"
+      ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
+      : tone === "info"
+        ? "border-sky-400/40 bg-sky-500/10 text-sky-200"
+        : "border-[var(--line-soft)] bg-[var(--surface-strong)] text-[var(--text-muted)]";
+  return <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${toneClass}`}>{label}</span>;
 }
 
 function MiniStat({ label, value }: { label: string; value: string }) {
@@ -1419,6 +2028,40 @@ function fmtMoney(value: number) {
   return new Intl.NumberFormat("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(
     Math.round(value || 0)
   );
+}
+
+function formatInstitutionLabel(value?: InstitutionType | string | null) {
+  if (!value) return "--";
+  if (value === "COACHING_INSTITUTE") return "Coaching Institute";
+  if (value === "COMPANY") return "Corporate";
+  return value
+    .toString()
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatAudienceLabel(value?: IntakeAudience | string | null) {
+  if (!value) return "--";
+  if (value === "PARENT") return "Parent";
+  if (value === "STUDENT") return "Student";
+  if (value === "EMPLOYEE") return "Employee";
+  return formatKeyLabel(value);
+}
+
+function formatModeLabel(value?: string | null) {
+  if (!value) return "--";
+  return value
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatKeyLabel(value: string) {
+  return value
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function formatDate(value?: string | null) {

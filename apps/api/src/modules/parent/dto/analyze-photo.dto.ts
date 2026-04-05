@@ -12,4 +12,8 @@ export class AnalyzePhotoDto {
   @IsOptional()
   @IsString()
   photoKey?: string;
+
+  @IsOptional()
+  @IsString()
+  preferredPhotoName?: string;
 }

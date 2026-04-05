@@ -494,6 +494,8 @@ export class AdminService {
         principalPhone: true,
         status: true,
         salesOwnerId: true,
+        institutionType: true,
+        registrationDataJson: true,
         createdAt: true,
         managedBy: { select: { id: true, user: { select: { email: true } } } }
       }
@@ -592,16 +594,7 @@ export class AdminService {
     await this.assertSchoolAccess(actor, schoolId);
     const page = Math.max(Number(query.page || 1), 1);
     const pageSize = Math.min(Math.max(Number(query.pageSize || 20), 1), 200);
-    const where: Prisma.StudentWhereInput = { schoolId, deletedAt: null };
-    if (query.status) where.status = query.status;
-    if (query.className?.trim()) where.className = query.className.trim().toUpperCase();
-    if (query.q?.trim()) {
-      const text = query.q.trim();
-      where.OR = [
-        { fullName: { contains: text, mode: "insensitive" } },
-        { rollNumber: { contains: text, mode: "insensitive" } }
-      ];
-    }
+    const where = this.buildSchoolStudentWhere(schoolId, query);
 
     const [total, rows] = await Promise.all([
       this.prisma.student.count({ where }),
@@ -628,6 +621,161 @@ export class AdminService {
       })
     ]);
     return { page, pageSize, total, rows: rows.map((row) => this.maskStudentSummary(actor, row)) };
+  }
+
+  async exportSchoolStudents(actor: AuthenticatedUser, schoolId: string, query: StudentQuery) {
+    await this.assertSchoolAccess(actor, schoolId);
+    const where = this.buildSchoolStudentWhere(schoolId, query);
+    const school = await this.prisma.school.findFirst({
+      where: { id: schoolId, deletedAt: null },
+      select: { code: true, name: true }
+    });
+    if (!school) throw new NotFoundException("School not found");
+
+    const rows = await this.prisma.student.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        fullName: true,
+        className: true,
+        section: true,
+        rollNumber: true,
+        parentName: true,
+        parentNameCiphertext: true,
+        parentMobile: true,
+        parentMobileCiphertext: true,
+        address: true,
+        addressCiphertext: true,
+        photoKey: true,
+        status: true,
+        intakeStage: true,
+        createdAt: true,
+        intakeLink: {
+          select: {
+            campaignName: true,
+            campaign: {
+              select: {
+                dataSchemaJson: true
+              }
+            }
+          }
+        },
+        submissionEvents: {
+          orderBy: { submittedAt: "desc" },
+          take: 1,
+          select: {
+            submittedAt: true,
+            payloadJson: true
+          }
+        }
+      }
+    });
+
+    const exportFieldOrder = [
+      "fullName",
+      "className",
+      "division",
+      "rollNumber",
+      "dob",
+      "bloodGroup",
+      "parentName",
+      "mobileNumber",
+      "emergencyNumber",
+      "fullAddress",
+      "aadhaarNumber"
+    ] as const;
+
+    const exportColumns = [
+      { key: "studentId", label: "Student ID" },
+      { key: "campaignName", label: "Campaign" },
+      { key: "segmentLabel", label: "Segment" }
+    ];
+
+    const canViewSensitive = this.canViewSensitiveStudentData(actor);
+    const preparedRows = rows.map((row) => {
+      const masked = this.maskStudentSummary(actor, row);
+      const submission = row.submissionEvents[0];
+      const payload = this.asExportRecord(submission?.payloadJson);
+      const dataSchema = this.readStudentExportSchema(row.intakeLink?.campaign?.dataSchemaJson, payload, row);
+      const photoKey = row.photoKey?.trim() || "";
+      const photoPath = this.extractLocalPhotoPath(photoKey);
+      const visibleMobile =
+        canViewSensitive
+          ? this.readExportString(payload.submittedMobile) ||
+            this.readExportString(payload.verifiedMobile) ||
+            masked.parentMobile ||
+            ""
+          : masked.parentMobile || "";
+      const emergencyNumber = canViewSensitive
+        ? this.readExportString(payload.emergencyNumber)
+        : this.maskPhone(this.readExportString(payload.emergencyNumber));
+      const aadhaarNumber = canViewSensitive ? this.readExportString(payload.aadhaarNumber) : "";
+      const prepared = {
+        studentId: masked.id,
+        campaignName: this.readExportString(payload.campaignName) || row.intakeLink?.campaignName || "",
+        segmentLabel:
+          this.readExportString(payload.segmentLabel) ||
+          [masked.className, masked.section].filter(Boolean).join(" • "),
+        fullName: masked.fullName || this.readExportString(payload.fullName),
+        className: this.readExportString(payload.className) || masked.className || "",
+        division: this.readExportString(payload.division) || masked.section || "",
+        rollNumber: this.readExportString(payload.rollNumber) || masked.rollNumber || "",
+        dob: this.readExportString(payload.dob),
+        bloodGroup: this.readExportString(payload.bloodGroup),
+        parentName: masked.parentName || this.readExportString(payload.parentName),
+        mobileNumber: visibleMobile,
+        emergencyNumber,
+        fullAddress: masked.address || this.readExportString(payload.address),
+        aadhaarNumber,
+        status: masked.status,
+        intakeStage: masked.intakeStage || this.readExportString(payload.stage),
+        submittedAt: submission?.submittedAt?.toISOString() || masked.createdAt.toISOString(),
+        photoCaptured: photoKey ? "YES" : "NO",
+        photoFileName: photoPath ? photoPath.split("/").pop() || "" : "",
+        photoFolder: photoPath && photoPath.includes("/") ? photoPath.slice(0, photoPath.lastIndexOf("/")) : "",
+        photoLink: "",
+        photoKey
+      };
+
+      return { dataSchema, prepared };
+    });
+
+    const selectedDynamicColumns = exportFieldOrder
+      .filter((field) => preparedRows.some((row) => row.dataSchema[field]))
+      .map((field) => ({ key: field, label: this.studentExportFieldLabel(field) }));
+
+    const columns = [
+      ...exportColumns,
+      ...selectedDynamicColumns,
+      { key: "status", label: "Status" },
+      { key: "intakeStage", label: "Intake Stage" },
+      { key: "submittedAt", label: "Submitted At" },
+      { key: "photoCaptured", label: "Photo Captured" },
+      { key: "photoFileName", label: "Photo File Name" },
+      { key: "photoFolder", label: "Photo Folder" },
+      { key: "photoLink", label: "Photo Link" }
+    ];
+
+    return {
+      fileName: `${school.code || school.name}-students-export`,
+      columns,
+      rows: preparedRows.map((row) => row.prepared)
+    };
+  }
+
+  private buildSchoolStudentWhere(schoolId: string, query: StudentQuery): Prisma.StudentWhereInput {
+    const where: Prisma.StudentWhereInput = { schoolId, deletedAt: null };
+    if (query.status) where.status = query.status;
+    if (query.className?.trim()) where.className = query.className.trim().toUpperCase();
+    if (query.q?.trim()) {
+      const text = query.q.trim();
+      where.OR = [
+        { fullName: { contains: text, mode: "insensitive" } },
+        { rollNumber: { contains: text, mode: "insensitive" } }
+      ];
+    }
+    return where;
   }
 
   async listSchoolClassSummary(actor: AuthenticatedUser, schoolId: string) {
@@ -1531,6 +1679,14 @@ export class AdminService {
         ...(dto.principalEmail !== undefined ? { principalEmail: dto.principalEmail?.trim().toLowerCase() || null } : {}),
         ...(dto.principalPhone !== undefined ? { principalPhone: dto.principalPhone?.trim() || null } : {}),
         ...(dto.salesOwnerId !== undefined ? { salesOwnerId: dto.salesOwnerId || null } : {}),
+        ...(dto.institutionType ? { institutionType: dto.institutionType } : {}),
+        ...(dto.registrationData !== undefined
+          ? {
+              registrationDataJson: dto.registrationData
+                ? (dto.registrationData as Prisma.InputJsonValue)
+                : Prisma.JsonNull
+            }
+          : {}),
         ...(dto.status ? { status: dto.status as SchoolStatus } : {})
       }
     });
@@ -4054,6 +4210,113 @@ export class AdminService {
       role === Role.SCHOOL_ADMIN ||
       role === Role.SCHOOL_STAFF
     );
+  }
+
+  private asExportRecord(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return {} as Record<string, unknown>;
+    }
+    return value as Record<string, unknown>;
+  }
+
+  private readExportString(value: unknown) {
+    if (typeof value === "string") return value.trim();
+    if (typeof value === "number") return String(value);
+    return "";
+  }
+
+  private readExportBoolean(value: unknown, fallback = false) {
+    return typeof value === "boolean" ? value : fallback;
+  }
+
+  private readStudentExportSchema(
+    value: unknown,
+    payload: Record<string, unknown>,
+    row: { fullName: string; className?: string | null; section?: string | null; rollNumber?: string | null }
+  ) {
+    const schema = this.asExportRecord(value);
+    return {
+      fullName: this.readExportBoolean(schema.fullName, Boolean(row.fullName || this.readExportString(payload.fullName))),
+      className: this.readExportBoolean(
+        schema.className,
+        Boolean(row.className || this.readExportString(payload.className))
+      ),
+      division: this.readExportBoolean(
+        schema.division,
+        Boolean(row.section || this.readExportString(payload.division))
+      ),
+      rollNumber: this.readExportBoolean(
+        schema.rollNumber,
+        Boolean(row.rollNumber || this.readExportString(payload.rollNumber))
+      ),
+      dob: this.readExportBoolean(schema.dob, Boolean(this.readExportString(payload.dob))),
+      bloodGroup: this.readExportBoolean(
+        schema.bloodGroup,
+        Boolean(this.readExportString(payload.bloodGroup))
+      ),
+      parentName: this.readExportBoolean(
+        schema.parentName,
+        Boolean(this.readExportString(payload.parentName))
+      ),
+      mobileNumber: this.readExportBoolean(
+        schema.mobileNumber,
+        Boolean(this.readExportString(payload.verifiedMobile) || this.readExportString(payload.submittedMobile))
+      ),
+      emergencyNumber: this.readExportBoolean(
+        schema.emergencyNumber,
+        Boolean(this.readExportString(payload.emergencyNumber))
+      ),
+      fullAddress: this.readExportBoolean(
+        schema.fullAddress,
+        Boolean(this.readExportString(payload.address))
+      ),
+      aadhaarNumber: this.readExportBoolean(
+        schema.aadhaarNumber,
+        Boolean(this.readExportString(payload.aadhaarNumber))
+      )
+    };
+  }
+
+  private studentExportFieldLabel(
+    field:
+      | "fullName"
+      | "className"
+      | "division"
+      | "rollNumber"
+      | "dob"
+      | "bloodGroup"
+      | "parentName"
+      | "mobileNumber"
+      | "emergencyNumber"
+      | "fullAddress"
+      | "aadhaarNumber"
+  ) {
+    const labels = {
+      fullName: "Full Name",
+      className: "Class",
+      division: "Division",
+      rollNumber: "Roll Number",
+      dob: "Date of Birth",
+      bloodGroup: "Blood Group",
+      parentName: "Parent Name",
+      mobileNumber: "Mobile Number",
+      emergencyNumber: "Emergency Number",
+      fullAddress: "Full Address",
+      aadhaarNumber: "Aadhaar Number"
+    } as const;
+    return labels[field];
+  }
+
+  private extractLocalPhotoPath(photoKey?: string | null) {
+    const normalized = (photoKey || "").trim();
+    if (!normalized.startsWith("local://")) return "";
+    return normalized.slice("local://".length).replace(/^\/+/, "");
+  }
+
+  private maskPhone(value: string) {
+    const digits = value.replace(/\D/g, "");
+    if (!digits) return "";
+    return this.dataProtectionService.maskPhone(digits) || digits;
   }
 
   private maskSchoolContacts<

@@ -353,7 +353,8 @@ async function main() {
     const baseStepsByInstitution: Record<InstitutionType, Role[]> = {
       [InstitutionType.SCHOOL]: [Role.SCHOOL_ADMIN, Role.SALES_PERSON, Role.PRINTING],
       [InstitutionType.COLLEGE]: [Role.SCHOOL_ADMIN, Role.SALES_PERSON],
-      [InstitutionType.COMPANY]: [Role.COMPANY_ADMIN, Role.PRINTING]
+      [InstitutionType.COMPANY]: [Role.COMPANY_ADMIN, Role.PRINTING],
+      [InstitutionType.COACHING_INSTITUTE]: [Role.SCHOOL_ADMIN, Role.SALES_PERSON]
     };
 
     const steps = baseStepsByInstitution[item.school.institutionType];

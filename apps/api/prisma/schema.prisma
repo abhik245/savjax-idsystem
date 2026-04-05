@@ -53,12 +53,35 @@ enum InstitutionType {
   SCHOOL
   COLLEGE
   COMPANY
+  COACHING_INSTITUTE
 }
 
 enum IntakeAudience {
   PARENT
   STUDENT
   EMPLOYEE
+}
+
+enum IntakeActorType {
+  PARENT
+  STUDENT
+  STAFF
+}
+
+enum IntakeOtpStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+  FAILED
+}
+
+enum IntakeSessionStatus {
+  OTP_PENDING
+  VERIFIED
+  DRAFT
+  SUBMITTED
+  EXPIRED
+  FAILED
 }
 
 enum IntakeSubmissionStage {
@@ -296,6 +319,7 @@ model School {
   salesAssignments    SalesAssignment[]
   userAccesses        UserSchoolAccess[]
   users               User[]
+  intakeCampaigns     IntakeCampaign[]
   templates           Template[]
   intakeLinks         IntakeLink[]
   parentSubmissions   ParentSubmission[]
@@ -317,6 +341,7 @@ model School {
   managedById         String?
   managedBy           Employee?                @relation("SchoolManager", fields: [managedById], references: [id])
   institutionType     InstitutionType          @default(SCHOOL)
+  registrationDataJson Json?
   correctionLogs      CorrectionLog[]
   templateAssignments TemplateAssignment[]
   renderBatches       RenderBatch[]
@@ -393,6 +418,12 @@ model ParentSubmission {
   school      School   @relation(fields: [schoolId], references: [id])
   studentId   String?
   student     Student? @relation("ParentSubmissionStudent", fields: [studentId], references: [id])
+  verifiedMobile String?
+  otpVerifiedAt DateTime?
+  authSessionId String?
+  authSession IntakeAuthSession? @relation(fields: [authSessionId], references: [id], onDelete: SetNull)
+  actorType IntakeActorType?
+  sessionStatus IntakeSessionStatus?
   submittedAt DateTime @default(now())
   payloadJson Json
   payloadCiphertext String?
@@ -400,6 +431,8 @@ model ParentSubmission {
 
   @@index([schoolId, submittedAt])
   @@index([submittedAt])
+  @@index([authSessionId])
+  @@index([verifiedMobile, submittedAt])
 }
 
 model OtpChallenge {
@@ -419,6 +452,38 @@ model OtpChallenge {
   @@index([mobile, expiresAt])
   @@index([expiresAt])
   @@index([consumedAt])
+}
+
+model IntakeAuthSession {
+  id               String              @id @default(cuid())
+  campaignId       String?
+  campaign         IntakeCampaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  intakeLinkId     String
+  intakeLink       IntakeLink          @relation(fields: [intakeLinkId], references: [id], onDelete: Cascade)
+  mobileNumber     String
+  otpHash          String
+  otpStatus        IntakeOtpStatus     @default(PENDING)
+  actorType        IntakeActorType
+  attempts         Int                 @default(0)
+  maxAttempts      Int                 @default(5)
+  verifiedAt       DateTime?
+  expiresAt        DateTime
+  sessionStatus    IntakeSessionStatus @default(OTP_PENDING)
+  sessionTokenHash String?             @unique
+  allowMobileEdit  Boolean             @default(false)
+  duplicatePolicy  String?
+  draftPayloadJson Json?
+  ipAddress        String?
+  userAgent        String?
+  submissions      ParentSubmission[]
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([campaignId, createdAt])
+  @@index([intakeLinkId, createdAt])
+  @@index([mobileNumber, createdAt])
+  @@index([otpStatus, expiresAt])
+  @@index([sessionStatus, expiresAt])
 }
 
 model ApprovalRequest {
@@ -578,10 +643,40 @@ model Template {
   @@index([updatedById])
 }
 
+model IntakeCampaign {
+  id                String           @id @default(cuid())
+  schoolId          String
+  school            School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  name              String
+  institutionType   InstitutionType  @default(SCHOOL)
+  audience          IntakeAudience   @default(PARENT)
+  maxExpectedVolume Int              @default(0)
+  startsAt          DateTime         @default(now())
+  expiresAt         DateTime
+  targetSegmentsJson Json
+  dataSchemaJson    Json?
+  submissionModelJson Json?
+  approvalRulesJson Json?
+  metadataJson      Json?
+  isActive          Boolean          @default(true)
+  intakeLinks       IntakeLink[]
+  authSessions      IntakeAuthSession[]
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  deletedAt         DateTime?
+
+  @@index([schoolId, createdAt])
+  @@index([schoolId, institutionType])
+  @@index([schoolId, isActive])
+  @@index([expiresAt])
+}
+
 model IntakeLink {
   id                   String               @id @default(cuid())
   schoolId             String
   school               School               @relation(fields: [schoolId], references: [id])
+  campaignId           String?
+  campaign             IntakeCampaign?      @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   token                String               @unique
   campaignName         String               @default("Default Intake Campaign")
   institutionType      InstitutionType      @default(SCHOOL)
@@ -604,12 +699,14 @@ model IntakeLink {
   isActive             Boolean              @default(true)
   expiresAt            DateTime
   students             Student[]
+  authSessions         IntakeAuthSession[]
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   deletedAt            DateTime?
   TemplateAssignment   TemplateAssignment[]
 
   @@index([schoolId, institutionType])
+  @@index([campaignId])
   @@index([approvalOwnerId])
   @@index([templateId])
 }

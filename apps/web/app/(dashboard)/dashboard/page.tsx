@@ -67,6 +67,10 @@ type ModuleKey =
   | "settings"
   | "audit-logs";
 type SchoolStatus = "ACTIVE" | "INACTIVE";
+type InstitutionTypeValue = "SCHOOL" | "COLLEGE" | "COMPANY" | "COACHING_INSTITUTE";
+type CampusTypeValue = "SINGLE" | "MULTI_CAMPUS";
+type ApprovalLevelsValue = "SINGLE" | "MULTI_LEVEL";
+type DeliveryModelValue = "CENTRALIZED" | "PER_CLASS";
 type MetricKey = "submissions" | "approvals" | "pending_approvals" | "revenue";
 type StudentStatus =
   | "DRAFT"
@@ -118,6 +122,7 @@ type SchoolRow = {
   city?: string | null;
   state?: string | null;
   status?: SchoolStatus;
+  institutionType?: InstitutionTypeValue | null;
   salesOwner?: { id: string; name?: string | null; email: string } | null;
   createdAt?: string;
 };
@@ -410,14 +415,61 @@ type RenderBatchRow = {
 
 type SchoolForm = {
   name: string;
-  code: string;
   email: string;
   phone: string;
+  institutionType: InstitutionTypeValue;
+  boardAffiliation: string;
+  affiliationNumber: string;
+  yearEstablished: string;
+  addressStreet: string;
+  addressArea: string;
   city: string;
   state: string;
+  pinCode: string;
+  mapLatitude: string;
+  mapLongitude: string;
+  campusType: CampusTypeValue;
+  decisionMakerTitle: string;
   principalName: string;
   principalEmail: string;
   principalPhone: string;
+  operationalContactName: string;
+  operationalContactRole: string;
+  operationalContactPhone: string;
+  operationalContactWhatsApp: string;
+  operationalContactEmail: string;
+  procurementContactName: string;
+  procurementContactEmail: string;
+  procurementContactPhone: string;
+  secondaryContactName: string;
+  secondaryContactEmail: string;
+  secondaryContactPhone: string;
+  approvalAuthorityFlag: boolean;
+  cardStudentId: boolean;
+  cardStaffId: boolean;
+  cardVisitorId: boolean;
+  smartCardsEnabled: boolean;
+  fieldName: boolean;
+  fieldPhoto: boolean;
+  fieldStandard: boolean;
+  fieldClass: boolean;
+  fieldDivision: boolean;
+  fieldDepartment: boolean;
+  fieldIdNumber: boolean;
+  fieldDob: boolean;
+  fieldBloodGroup: boolean;
+  fieldAddress: boolean;
+  fieldParentName: boolean;
+  fieldEmergencyContact: boolean;
+  customFields: string;
+  totalStudents: string;
+  totalStaff: string;
+  expectedAnnualAdditions: string;
+  approvalRequired: boolean;
+  approvalLevels: ApprovalLevelsValue;
+  autoApprovalThreshold: string;
+  deliveryModel: DeliveryModelValue;
+  dispatchAddressConfirmation: boolean;
   status: SchoolStatus;
   salesOwnerId: string;
   adminEmail: string;
@@ -527,7 +579,7 @@ type StudioDragState = {
 
 const MODULES: Array<{ key: ModuleKey; label: string; icon: typeof LayoutDashboard }> = [
   { key: "overview", label: "Dashboard", icon: LayoutDashboard },
-  { key: "schools", label: "Schools", icon: Building2 },
+  { key: "schools", label: "Institutions", icon: Building2 },
   { key: "users", label: "Users", icon: Users },
   { key: "templates", label: "ID Card Templates", icon: IdCard },
   { key: "workflow", label: "Workflow", icon: ClipboardList },
@@ -561,6 +613,30 @@ const WORKFLOW_STATUSES: StudentStatus[] = [
   "PRINTED",
   "DELIVERED",
   "REJECTED"
+];
+
+const INSTITUTION_TYPE_OPTIONS: Array<{ value: InstitutionTypeValue; label: string }> = [
+  { value: "SCHOOL", label: "School" },
+  { value: "COLLEGE", label: "College" },
+  { value: "COMPANY", label: "Corporate" },
+  { value: "COACHING_INSTITUTE", label: "Coaching Institute" }
+];
+
+const BOARD_AFFILIATION_OPTIONS = ["CBSE", "ICSE", "SSC", "IB", "STATE_BOARD", "AUTONOMOUS"];
+
+const CAMPUS_TYPE_OPTIONS: Array<{ value: CampusTypeValue; label: string }> = [
+  { value: "SINGLE", label: "Single Campus" },
+  { value: "MULTI_CAMPUS", label: "Multi-campus" }
+];
+
+const APPROVAL_LEVEL_OPTIONS: Array<{ value: ApprovalLevelsValue; label: string }> = [
+  { value: "SINGLE", label: "Single Level" },
+  { value: "MULTI_LEVEL", label: "Multi-level" }
+];
+
+const DELIVERY_MODEL_OPTIONS: Array<{ value: DeliveryModelValue; label: string }> = [
+  { value: "CENTRALIZED", label: "Centralized Delivery" },
+  { value: "PER_CLASS", label: "Per-class Distribution" }
 ];
 
 const CARD_LAYOUT_PRESETS: Array<{ key: string; label: string; width: number; height: number }> = [
@@ -877,21 +953,7 @@ export default function DashboardPage() {
   const [auditActorId, setAuditActorId] = useState("");
   const [auditPageSize] = useState(20);
 
-  const [schoolForm, setSchoolForm] = useState<SchoolForm>({
-    name: "",
-    code: "",
-    email: "",
-    phone: "",
-    city: "",
-    state: "",
-    principalName: "",
-    principalEmail: "",
-    principalPhone: "",
-    status: "ACTIVE",
-    salesOwnerId: "",
-    adminEmail: "",
-    adminPassword: ""
-  });
+  const [schoolForm, setSchoolForm] = useState<SchoolForm>(createEmptySchoolForm);
   const [userForm, setUserForm] = useState<UserForm>({
     email: "",
     password: "",
@@ -2497,11 +2559,20 @@ export default function DashboardPage() {
     setLoading((prev) => ({ ...prev, createSchool: true }));
     setError("");
     try {
+      const validationError = validateInstitutionForm(schoolForm);
+      if (validationError) {
+        setError(validationError);
+        clearMessage();
+        return;
+      }
+
       const payload = {
         name: schoolForm.name.trim(),
-        code: schoolForm.code.trim() || undefined,
         email: schoolForm.email.trim().toLowerCase(),
         phone: schoolForm.phone.trim() || undefined,
+        institutionType: schoolForm.institutionType,
+        address: composeInstitutionAddress(schoolForm),
+        registrationData: buildInstitutionRegistrationPayload(schoolForm),
         city: schoolForm.city.trim() || undefined,
         state: schoolForm.state.trim() || undefined,
         principalName: schoolForm.principalName.trim() || undefined,
@@ -2516,30 +2587,42 @@ export default function DashboardPage() {
         method: "POST",
         body: JSON.stringify(payload)
       });
-      setSuccess(`School created successfully. Tracking ID: ${created.trackingId || created.code}`);
-      setSchoolForm({
-        name: "",
-        code: "",
-        email: "",
-        phone: "",
-        city: "",
-        state: "",
-        principalName: "",
-        principalEmail: "",
-        principalPhone: "",
-        status: "ACTIVE",
-        salesOwnerId: "",
-        adminEmail: "",
-        adminPassword: ""
-      });
+      setSuccess(`Institution created successfully. Tracking ID: ${created.trackingId || created.code}`);
+      setSchoolForm(createEmptySchoolForm());
       await loadSchools();
       clearMessage();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create school");
+      setError(e instanceof Error ? e.message : "Failed to create institution");
       clearMessage();
     } finally {
       setLoading((prev) => ({ ...prev, createSchool: false }));
     }
+  }
+
+  function captureInstitutionLocation() {
+    setError("");
+    if (!navigator.geolocation) {
+      setError("Browser geolocation is not available on this device.");
+      clearMessage();
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setSchoolForm((prev) => ({
+          ...prev,
+          mapLatitude: position.coords.latitude.toFixed(6),
+          mapLongitude: position.coords.longitude.toFixed(6)
+        }));
+        setSuccess("Current location captured.");
+        clearMessage();
+      },
+      (geoError) => {
+        setError(geoError.message || "Unable to capture location.");
+        clearMessage();
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+    );
   }
 
   async function submitUser() {
@@ -3260,12 +3343,12 @@ export default function DashboardPage() {
                 <section className="grid gap-4 xl:grid-cols-[1.35fr_1fr]">
                   <article className="glass p-4">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                      <p className="m-0 text-sm font-semibold">Schools</p>
+                      <p className="m-0 text-sm font-semibold">Institutions</p>
                       <div className="flex items-center gap-2">
                         <input
                           value={schoolSearch}
                           onChange={(e) => setSchoolSearch(e.target.value)}
-                          placeholder="Filter schools..."
+                          placeholder="Filter institutions..."
                           className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs outline-none"
                         />
                         <button
@@ -3285,7 +3368,8 @@ export default function DashboardPage() {
                         <table className="w-full min-w-[780px] text-left text-xs">
                           <thead className="bg-[var(--surface-strong)] text-[var(--text-muted)]">
                             <tr>
-                              <th className="px-3 py-2">School</th>
+                              <th className="px-3 py-2">Institution</th>
+                              <th className="px-3 py-2">Type</th>
                               <th className="px-3 py-2">Code</th>
                               <th className="px-3 py-2">Email</th>
                               <th className="px-3 py-2">Region</th>
@@ -3298,6 +3382,7 @@ export default function DashboardPage() {
                             {filteredSchools.map((s) => (
                               <tr key={s.id} className="border-t border-[var(--line-soft)]">
                                 <td className="px-3 py-2 font-medium">{s.name}</td>
+                                <td className="px-3 py-2">{formatInstitutionTypeLabel(s.institutionType)}</td>
                                 <td className="px-3 py-2">{s.code}</td>
                                 <td className="px-3 py-2">{s.email}</td>
                                 <td className="px-3 py-2">
@@ -3321,7 +3406,7 @@ export default function DashboardPage() {
                         </table>
                       </div>
                     ) : (
-                      <EmptyState text="No schools available for current filter." />
+                      <EmptyState text="No institutions available for the current filter." />
                     )}
                   </article>
 
@@ -3329,79 +3414,299 @@ export default function DashboardPage() {
                     <div className="mb-3 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <Plus size={16} />
-                        <p className="m-0 text-sm font-semibold">Add School</p>
+                        <p className="m-0 text-sm font-semibold">Institution Registration</p>
                       </div>
                       <button
                         type="button"
                         onClick={() => setShowAddSchoolForm((v) => !v)}
                         className="rounded-xl border border-[var(--line-soft)] px-3 py-1.5 text-xs hover-glow"
                       >
-                        {showAddSchoolForm ? "Hide form" : "Add New School"}
+                        {showAddSchoolForm ? "Hide form" : "Add New Institution"}
                       </button>
                     </div>
                     {showAddSchoolForm ? (
-                      <div className="grid gap-2">
-                      <InputField label="School Name" value={schoolForm.name} onChange={(v) => setSchoolForm((p) => ({ ...p, name: v }))} />
-                      <InputField
-                        label="Code (optional, auto-generated if blank)"
-                        value={schoolForm.code}
-                        onChange={(v) => setSchoolForm((p) => ({ ...p, code: v.toUpperCase() }))}
-                      />
-                      <InputField label="School Email" value={schoolForm.email} onChange={(v) => setSchoolForm((p) => ({ ...p, email: v }))} />
-                      <InputField label="Phone" value={schoolForm.phone} onChange={(v) => setSchoolForm((p) => ({ ...p, phone: v }))} />
-                      <div className="grid grid-cols-2 gap-2">
-                        <InputField label="City" value={schoolForm.city} onChange={(v) => setSchoolForm((p) => ({ ...p, city: v }))} />
-                        <InputField label="State" value={schoolForm.state} onChange={(v) => setSchoolForm((p) => ({ ...p, state: v }))} />
-                      </div>
-                      <InputField label="Principal Name" value={schoolForm.principalName} onChange={(v) => setSchoolForm((p) => ({ ...p, principalName: v }))} />
-                      <InputField label="Principal Email" value={schoolForm.principalEmail} onChange={(v) => setSchoolForm((p) => ({ ...p, principalEmail: v }))} />
-                      <InputField label="Principal Phone" value={schoolForm.principalPhone} onChange={(v) => setSchoolForm((p) => ({ ...p, principalPhone: v }))} />
-                      <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
-                        <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Status</span>
-                        <select
-                          value={schoolForm.status}
-                          onChange={(e) => setSchoolForm((p) => ({ ...p, status: e.target.value as SchoolStatus }))}
-                          className="w-full bg-transparent outline-none"
+                      <div className="space-y-4">
+                        <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-strong)] p-4">
+                          <p className="m-0 text-sm font-semibold">1. Institution Identity Layer</p>
+                          <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">
+                            Core legal identity, affiliation, and geo control for the institution.
+                          </p>
+                          <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                            <InputField label="Institution Name" value={schoolForm.name} onChange={(v) => setSchoolForm((p) => ({ ...p, name: v }))} />
+                            <SelectField
+                              label="Institution Type"
+                              value={schoolForm.institutionType}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, institutionType: v as InstitutionTypeValue }))}
+                              options={INSTITUTION_TYPE_OPTIONS}
+                            />
+                            <SelectField
+                              label="Board / Affiliation"
+                              value={schoolForm.boardAffiliation}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, boardAffiliation: v }))}
+                              options={BOARD_AFFILIATION_OPTIONS.map((value) => ({
+                                value,
+                                label: value.replace(/_/g, " ")
+                              }))}
+                            />
+                            <InputField
+                              label="Affiliation Number"
+                              value={schoolForm.affiliationNumber}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, affiliationNumber: v.toUpperCase() }))}
+                            />
+                            <InputField
+                              label="Year Established"
+                              value={schoolForm.yearEstablished}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, yearEstablished: v.replace(/\D/g, "").slice(0, 4) }))}
+                              type="number"
+                            />
+                            <div className="rounded-xl border border-dashed border-[var(--line-soft)] bg-[rgba(15,60,120,0.08)] px-3 py-2 text-xs">
+                              <span className="mb-1 block text-[11px] text-[var(--text-muted)]">
+                                Institution Code
+                              </span>
+                              <p className="m-0 font-medium">Auto-generated on save</p>
+                              <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">
+                                Format: SA0001, SA0002, SA0003...
+                              </p>
+                            </div>
+                            <InputField label="Institution Email" value={schoolForm.email} onChange={(v) => setSchoolForm((p) => ({ ...p, email: v }))} />
+                            <InputField
+                              label="Institution Main Phone"
+                              value={schoolForm.phone}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, phone: v }))}
+                            />
+                            <InputField
+                              label="Street"
+                              value={schoolForm.addressStreet}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, addressStreet: v }))}
+                            />
+                            <InputField
+                              label="Area / Locality"
+                              value={schoolForm.addressArea}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, addressArea: v }))}
+                            />
+                            <InputField label="City" value={schoolForm.city} onChange={(v) => setSchoolForm((p) => ({ ...p, city: v }))} />
+                            <InputField label="State" value={schoolForm.state} onChange={(v) => setSchoolForm((p) => ({ ...p, state: v }))} />
+                            <InputField
+                              label="PIN Code"
+                              value={schoolForm.pinCode}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, pinCode: v.replace(/\D/g, "").slice(0, 6) }))}
+                            />
+                            <SelectField
+                              label="Campus Type"
+                              value={schoolForm.campusType}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, campusType: v as CampusTypeValue }))}
+                              options={CAMPUS_TYPE_OPTIONS}
+                            />
+                            <InputField
+                              label="Latitude"
+                              value={schoolForm.mapLatitude}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, mapLatitude: v }))}
+                            />
+                            <InputField
+                              label="Longitude"
+                              value={schoolForm.mapLongitude}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, mapLongitude: v }))}
+                            />
+                          </div>
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={captureInstitutionLocation}
+                              className="rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs hover-glow"
+                            >
+                              Capture Current Location
+                            </button>
+                            <p className="m-0 text-[11px] text-[var(--text-muted)]">
+                              Uses browser geolocation to fill the lat/long fields for Google Maps level reference.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-strong)] p-4">
+                          <p className="m-0 text-sm font-semibold">2. Authority &amp; Control Layer</p>
+                          <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">
+                            Decision maker, execution contact, procurement point, and escalation chain.
+                          </p>
+                          <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                            <InputField
+                              label="Decision Maker Title"
+                              value={schoolForm.decisionMakerTitle}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, decisionMakerTitle: v }))}
+                            />
+                            <InputField
+                              label="Primary Decision Maker Name"
+                              value={schoolForm.principalName}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, principalName: v }))}
+                            />
+                            <InputField
+                              label="Primary Decision Maker Email"
+                              value={schoolForm.principalEmail}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, principalEmail: v }))}
+                            />
+                            <InputField
+                              label="Primary Decision Maker Phone"
+                              value={schoolForm.principalPhone}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, principalPhone: v }))}
+                            />
+                            <InputField
+                              label="Operational Contact Name"
+                              value={schoolForm.operationalContactName}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, operationalContactName: v }))}
+                            />
+                            <InputField
+                              label="Operational Contact Role"
+                              value={schoolForm.operationalContactRole}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, operationalContactRole: v }))}
+                            />
+                            <InputField
+                              label="Operational Contact Phone"
+                              value={schoolForm.operationalContactPhone}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, operationalContactPhone: v }))}
+                            />
+                            <InputField
+                              label="Operational WhatsApp"
+                              value={schoolForm.operationalContactWhatsApp}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, operationalContactWhatsApp: v }))}
+                            />
+                            <InputField
+                              label="Operational Contact Email"
+                              value={schoolForm.operationalContactEmail}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, operationalContactEmail: v }))}
+                            />
+                            <InputField
+                              label="Procurement Contact Name"
+                              value={schoolForm.procurementContactName}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, procurementContactName: v }))}
+                            />
+                            <InputField
+                              label="Procurement Contact Email"
+                              value={schoolForm.procurementContactEmail}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, procurementContactEmail: v }))}
+                            />
+                            <InputField
+                              label="Procurement Contact Phone"
+                              value={schoolForm.procurementContactPhone}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, procurementContactPhone: v }))}
+                            />
+                            <InputField
+                              label="Secondary Contact Name"
+                              value={schoolForm.secondaryContactName}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, secondaryContactName: v }))}
+                            />
+                            <InputField
+                              label="Secondary Contact Email"
+                              value={schoolForm.secondaryContactEmail}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, secondaryContactEmail: v }))}
+                            />
+                            <InputField
+                              label="Secondary Contact Phone"
+                              value={schoolForm.secondaryContactPhone}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, secondaryContactPhone: v }))}
+                            />
+                            <ToggleField
+                              label="Secondary contact has approval authority"
+                              checked={schoolForm.approvalAuthorityFlag}
+                              onChange={(checked) => setSchoolForm((p) => ({ ...p, approvalAuthorityFlag: checked }))}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-strong)] p-4">
+                          <p className="m-0 text-sm font-semibold">3A. ID Card Configuration</p>
+                          <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">
+                            Choose only the card types required for this institution. Intake data fields will now be controlled from Intake Campaigns.
+                          </p>
+                          <div className="mt-4">
+                            <p className="m-0 text-xs font-semibold text-[var(--text-primary)]">Cards Required</p>
+                          </div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <ToggleField label="Student ID" checked={schoolForm.cardStudentId} onChange={(checked) => setSchoolForm((p) => ({ ...p, cardStudentId: checked }))} />
+                            <ToggleField label="Staff ID" checked={schoolForm.cardStaffId} onChange={(checked) => setSchoolForm((p) => ({ ...p, cardStaffId: checked }))} />
+                            <ToggleField label="Visitor ID" checked={schoolForm.cardVisitorId} onChange={(checked) => setSchoolForm((p) => ({ ...p, cardVisitorId: checked }))} />
+                            <ToggleField label="RFID / Smart Cards" checked={schoolForm.smartCardsEnabled} onChange={(checked) => setSchoolForm((p) => ({ ...p, smartCardsEnabled: checked }))} />
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-strong)] p-4">
+                          <p className="m-0 text-sm font-semibold">3B. Volume &amp; Workflow</p>
+                          <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">
+                            Keep this section focused on institution volume and whether workflow is required.
+                          </p>
+                          <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                            <InputField
+                              label="Total Students"
+                              value={schoolForm.totalStudents}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, totalStudents: onlyDigits(v) }))}
+                              type="number"
+                            />
+                            <InputField
+                              label="Total Staff"
+                              value={schoolForm.totalStaff}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, totalStaff: onlyDigits(v) }))}
+                              type="number"
+                            />
+                            <InputField
+                              label="Expected Annual Additions"
+                              value={schoolForm.expectedAnnualAdditions}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, expectedAnnualAdditions: onlyDigits(v) }))}
+                              type="number"
+                            />
+                            <div className="xl:col-span-2">
+                              <ToggleField
+                                label="Workflow Required"
+                                checked={schoolForm.approvalRequired}
+                                onChange={(checked) => setSchoolForm((p) => ({ ...p, approvalRequired: checked }))}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-strong)] p-4">
+                          <p className="m-0 text-sm font-semibold">Ownership, Status &amp; Access</p>
+                          <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                            <SelectField
+                              label="Assign Sales Person"
+                              value={schoolForm.salesOwnerId}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, salesOwnerId: v }))}
+                              options={[
+                                { value: "", label: "Unassigned" },
+                                ...salesOwners.map((s) => ({ value: s.id, label: s.name }))
+                              ]}
+                            />
+                            <SelectField
+                              label="Status"
+                              value={schoolForm.status}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, status: v as SchoolStatus }))}
+                              options={[
+                                { value: "ACTIVE", label: "ACTIVE" },
+                                { value: "INACTIVE", label: "INACTIVE" }
+                              ]}
+                            />
+                            <InputField
+                              label="Institution Admin Email"
+                              value={schoolForm.adminEmail}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, adminEmail: v }))}
+                            />
+                            <InputField
+                              label="Institution Admin Password"
+                              value={schoolForm.adminPassword}
+                              onChange={(v) => setSchoolForm((p) => ({ ...p, adminPassword: v }))}
+                              type="password"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => void submitSchool()}
+                          disabled={loading.createSchool}
+                          className="w-full rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-3 py-3 text-sm font-semibold text-white disabled:opacity-60"
                         >
-                          <option value="ACTIVE">ACTIVE</option>
-                          <option value="INACTIVE">INACTIVE</option>
-                        </select>
-                      </label>
-                      <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
-                        <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Assign Sales Person</span>
-                        <select
-                          value={schoolForm.salesOwnerId}
-                          onChange={(e) => setSchoolForm((p) => ({ ...p, salesOwnerId: e.target.value }))}
-                          className="w-full bg-transparent outline-none"
-                        >
-                          <option value="">Unassigned</option>
-                          {salesOwners.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <InputField label="School Admin Email" value={schoolForm.adminEmail} onChange={(v) => setSchoolForm((p) => ({ ...p, adminEmail: v }))} />
-                        <InputField
-                          label="School Admin Password"
-                          value={schoolForm.adminPassword}
-                          onChange={(v) => setSchoolForm((p) => ({ ...p, adminPassword: v }))}
-                          type="password"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void submitSchool()}
-                        disabled={loading.createSchool}
-                        className="mt-1 rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
-                      >
-                        {loading.createSchool ? "Creating..." : "Create School"}
-                      </button>
+                          {loading.createSchool ? "Creating..." : "Create Institution"}
+                        </button>
                       </div>
                     ) : (
-                      <EmptyState text="Use Add New School to open the onboarding form." />
+                      <EmptyState text="Use Add New Institution to open the registration form." />
                     )}
                   </article>
                 </section>
@@ -5960,6 +6265,73 @@ function InputField({
   );
 }
 
+function SelectField({
+  label,
+  value,
+  onChange,
+  options
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
+      <span className="mb-1 block text-[11px] text-[var(--text-muted)]">{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="w-full bg-transparent outline-none">
+        {options.map((option) => (
+          <option key={`${label}-${option.value || "empty"}`} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function TextAreaField({
+  label,
+  value,
+  onChange,
+  placeholder
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
+      <span className="mb-1 block text-[11px] text-[var(--text-muted)]">{label}</span>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={4}
+        className="w-full resize-y bg-transparent outline-none"
+      />
+    </label>
+  );
+}
+
+function ToggleField({
+  label,
+  checked,
+  onChange
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
+      <span>{label}</span>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4" />
+    </label>
+  );
+}
+
 function InputCompact({
   label,
   value,
@@ -6051,6 +6423,250 @@ function OrbLoader({ theme }: { theme: ThemeMode }) {
       <p className="absolute bottom-[18%] m-0 text-xs text-[var(--text-muted)]">Loading enterprise workspace...</p>
     </main>
   );
+}
+
+function createEmptySchoolForm(): SchoolForm {
+  return {
+    name: "",
+    email: "",
+    phone: "",
+    institutionType: "SCHOOL",
+    boardAffiliation: "CBSE",
+    affiliationNumber: "",
+    yearEstablished: "",
+    addressStreet: "",
+    addressArea: "",
+    city: "",
+    state: "",
+    pinCode: "",
+    mapLatitude: "",
+    mapLongitude: "",
+    campusType: "SINGLE",
+    decisionMakerTitle: "Principal / Director",
+    principalName: "",
+    principalEmail: "",
+    principalPhone: "",
+    operationalContactName: "",
+    operationalContactRole: "Admin Head / Office Staff",
+    operationalContactPhone: "",
+    operationalContactWhatsApp: "",
+    operationalContactEmail: "",
+    procurementContactName: "",
+    procurementContactEmail: "",
+    procurementContactPhone: "",
+    secondaryContactName: "",
+    secondaryContactEmail: "",
+    secondaryContactPhone: "",
+    approvalAuthorityFlag: false,
+    cardStudentId: true,
+    cardStaffId: false,
+    cardVisitorId: false,
+    smartCardsEnabled: false,
+    fieldName: false,
+    fieldPhoto: false,
+    fieldStandard: false,
+    fieldClass: false,
+    fieldDivision: false,
+    fieldDepartment: false,
+    fieldIdNumber: false,
+    fieldDob: false,
+    fieldBloodGroup: false,
+    fieldAddress: false,
+    fieldParentName: false,
+    fieldEmergencyContact: false,
+    customFields: "",
+    totalStudents: "",
+    totalStaff: "",
+    expectedAnnualAdditions: "",
+    approvalRequired: true,
+    approvalLevels: "SINGLE",
+    autoApprovalThreshold: "",
+    deliveryModel: "CENTRALIZED",
+    dispatchAddressConfirmation: true,
+    status: "ACTIVE",
+    salesOwnerId: "",
+    adminEmail: "",
+    adminPassword: ""
+  };
+}
+
+function validateInstitutionForm(form: SchoolForm) {
+  const requiredFields: Array<[string, string]> = [
+    ["Institution Name", form.name],
+    ["Institution Email", form.email],
+    ["Affiliation Number", form.affiliationNumber],
+    ["Street", form.addressStreet],
+    ["Area / Locality", form.addressArea],
+    ["City", form.city],
+    ["State", form.state],
+    ["PIN Code", form.pinCode],
+    ["Primary Decision Maker Name", form.principalName],
+    ["Primary Decision Maker Email", form.principalEmail],
+    ["Primary Decision Maker Phone", form.principalPhone],
+    ["Operational Contact Name", form.operationalContactName],
+    ["Operational Contact Role", form.operationalContactRole],
+    ["Operational Contact Phone", form.operationalContactPhone],
+    ["Operational WhatsApp", form.operationalContactWhatsApp],
+    ["Operational Contact Email", form.operationalContactEmail],
+    ["Total Students", form.totalStudents],
+    ["Total Staff", form.totalStaff],
+    ["Expected Annual Additions", form.expectedAnnualAdditions]
+  ];
+
+  for (const [label, value] of requiredFields) {
+    if (!value.trim()) return `${label} is required.`;
+  }
+
+  if (!form.cardStudentId && !form.cardStaffId && !form.cardVisitorId) {
+    return "Select at least one required card type.";
+  }
+
+  if ((form.adminEmail.trim() && !form.adminPassword.trim()) || (!form.adminEmail.trim() && form.adminPassword.trim())) {
+    return "Institution admin email and password should be provided together.";
+  }
+
+  return "";
+}
+
+function buildInstitutionRegistrationPayload(form: SchoolForm) {
+  return {
+    identity: {
+      institutionName: form.name.trim(),
+      institutionType: form.institutionType,
+      boardAffiliation: form.boardAffiliation,
+      affiliationNumber: form.affiliationNumber.trim(),
+      yearEstablished: parseOptionalInteger(form.yearEstablished),
+      location: {
+        street: form.addressStreet.trim(),
+        area: form.addressArea.trim(),
+        city: form.city.trim(),
+        state: form.state.trim(),
+        pinCode: form.pinCode.trim(),
+        latitude: parseOptionalNumber(form.mapLatitude),
+        longitude: parseOptionalNumber(form.mapLongitude),
+        campusType: form.campusType
+      }
+    },
+    authority: {
+      primaryDecisionMaker: {
+        title: form.decisionMakerTitle.trim() || null,
+        name: form.principalName.trim(),
+        email: form.principalEmail.trim().toLowerCase(),
+        phone: form.principalPhone.trim()
+      },
+      operationalContact: {
+        title: form.operationalContactRole.trim() || null,
+        name: form.operationalContactName.trim(),
+        phone: form.operationalContactPhone.trim(),
+        whatsapp: form.operationalContactWhatsApp.trim(),
+        email: form.operationalContactEmail.trim().toLowerCase()
+      },
+      procurementContact: {
+        name: form.procurementContactName.trim() || null,
+        email: form.procurementContactEmail.trim().toLowerCase() || null,
+        phone: form.procurementContactPhone.trim() || null
+      },
+      escalation: {
+        secondaryContact: {
+          name: form.secondaryContactName.trim() || null,
+          email: form.secondaryContactEmail.trim().toLowerCase() || null,
+          phone: form.secondaryContactPhone.trim() || null
+        },
+        approvalAuthorityFlag: form.approvalAuthorityFlag
+      }
+    },
+    configuration: {
+      idCard: {
+        cardTypes: {
+          studentId: form.cardStudentId,
+          staffId: form.cardStaffId,
+          visitorId: form.cardVisitorId,
+          smartCards: form.smartCardsEnabled
+        },
+        dataFields: {
+          name: false,
+          photo: false,
+          standard: false,
+          className: false,
+          division: false,
+          department: false,
+          idNumber: false,
+          dob: false,
+          bloodGroup: false,
+          address: false,
+          parentName: false,
+          emergencyContact: false
+        },
+        customFields: []
+      },
+      volumeScale: {
+        totalStudents: parseInteger(form.totalStudents),
+        totalStaff: parseInteger(form.totalStaff),
+        expectedAnnualAdditions: parseInteger(form.expectedAnnualAdditions)
+      },
+      workflow: {
+        approvalRequired: form.approvalRequired,
+        approvalLevels: form.approvalLevels,
+        autoApprovalThreshold: parseOptionalInteger(form.autoApprovalThreshold)
+      },
+      delivery: {
+        model: form.deliveryModel,
+        dispatchAddressConfirmation: form.dispatchAddressConfirmation
+      }
+    }
+  };
+}
+
+function composeInstitutionAddress(form: SchoolForm) {
+  return [form.addressStreet, form.addressArea, form.city, form.state, form.pinCode]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function formatInstitutionTypeLabel(value?: string | null) {
+  switch (value) {
+    case "COLLEGE":
+      return "College";
+    case "COMPANY":
+      return "Corporate";
+    case "COACHING_INSTITUTE":
+      return "Coaching Institute";
+    case "SCHOOL":
+      return "School";
+    default:
+      return "--";
+  }
+}
+
+function onlyDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function parseInteger(value: string) {
+  const parsed = Number.parseInt(value || "0", 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseOptionalInteger(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseOptionalNumber(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function splitCustomFields(value: string) {
+  return value
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function defaultMonthRange(): OverviewFilters {

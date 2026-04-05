@@ -9,6 +9,7 @@ import { TenantScope } from "../../common/decorators/tenant-scope.decorator";
 import { Role } from "../../common/enums/role.enum";
 import { CreateSchoolDto } from "./dto/create-school.dto";
 import { CreateIntakeLinkDto } from "./dto/create-intake-link.dto";
+import { CreateIntakeCampaignDto } from "./dto/create-intake-campaign.dto";
 
 @Controller()
 export class SchoolsController {
@@ -73,10 +74,10 @@ export class SchoolsController {
   @Post("schools/:schoolId/campaigns")
   createCampaign(
     @Param("schoolId") schoolId: string,
-    @Body() dto: CreateIntakeLinkDto,
+    @Body() dto: CreateIntakeCampaignDto,
     @Req() req: { user: AuthenticatedUser }
   ) {
-    return this.schoolsService.createIntakeLink(schoolId, dto, req.user);
+    return this.schoolsService.createCampaign(schoolId, dto, req.user);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard, TenantScopeGuard)
@@ -84,7 +85,7 @@ export class SchoolsController {
   @TenantScope({ sources: [{ type: "query", key: "schoolId" }], optional: true })
   @Get("campaigns")
   listCampaigns(@Query("schoolId") schoolId: string | undefined, @Req() req: { user: AuthenticatedUser }) {
-    return this.schoolsService.listIntakeLinks(req.user, schoolId);
+    return this.schoolsService.listCampaigns(req.user, schoolId);
   }
 
   @Get("campaigns/token/:token")

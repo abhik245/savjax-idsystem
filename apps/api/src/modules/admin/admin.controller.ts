@@ -171,6 +171,29 @@ export class AdminController {
     return this.adminService.listSchoolStudents(req.user, schoolId, { q, status, className, page, pageSize });
   }
 
+  @Get("schools/:schoolId/students/export")
+  @UseGuards(TenantScopeGuard)
+  @TenantScope({ sources: [{ type: "param", key: "schoolId" }] })
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.COMPANY_ADMIN,
+    Role.OPERATIONS_ADMIN,
+    Role.SALES_PERSON,
+    Role.SALES,
+    Role.PRINTING,
+    Role.SCHOOL_ADMIN,
+    Role.SCHOOL_STAFF
+  )
+  exportSchoolStudents(
+    @Req() req: AuthRequest,
+    @Param("schoolId") schoolId: string,
+    @Query("q") q?: string,
+    @Query("status", new ParseEnumPipe(StudentStatus, { optional: true })) status?: StudentStatus,
+    @Query("className") className?: string
+  ) {
+    return this.adminService.exportSchoolStudents(req.user, schoolId, { q, status, className });
+  }
+
   @Get("schools/:schoolId/classes")
   @UseGuards(TenantScopeGuard)
   @TenantScope({ sources: [{ type: "param", key: "schoolId" }] })

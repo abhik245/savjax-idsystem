@@ -9,6 +9,7 @@ type ProcessPhotoInput = {
   schoolId?: string;
   intakeToken?: string;
   photoBgPreference?: string;
+  preferredPhotoName?: string;
 };
 
 export type PhotoIntelligenceResult = {
@@ -34,10 +35,20 @@ type CachedAnalysis = {
   expiresAt: number;
 };
 
+type PublicCachedAnalysis = {
+  id: string;
+  schoolId: string;
+  intakeToken: string;
+  sessionId?: string;
+  result: PhotoIntelligenceResult;
+  expiresAt: number;
+};
+
 @Injectable()
 export class FaceIntelligenceService {
   private readonly logger = new Logger(FaceIntelligenceService.name);
   private readonly cachedAnalyses = new Map<string, CachedAnalysis>();
+  private readonly publicCachedAnalyses = new Map<string, PublicCachedAnalysis>();
   private readonly analysisTtlMs = 15 * 60 * 1000;
 
   async processPhoto(input: ProcessPhotoInput): Promise<PhotoIntelligenceResult> {
@@ -89,8 +100,9 @@ export class FaceIntelligenceService {
     const aws = await this.detectFaceWithAws(parsed.buffer);
     if (aws) {
       if (!aws.faceDetected) {
-        status = "FAILED";
-        score = 0;
+        status = "WARN";
+        score = Math.min(score, 58);
+        warnings.push("Face was not detected clearly. Retake is recommended.");
       } else {
         if ((aws.confidence || 0) < 85) {
           status = "WARN";
@@ -110,11 +122,12 @@ export class FaceIntelligenceService {
       }
     }
 
-    if (status === "FAILED") {
-      throw new BadRequestException("Face not detected clearly. Retake photo with full face visible.");
-    }
-
-    const photoKey = await this.persistPhoto(parsed.buffer, parsed.extension);
+    const photoKey = await this.persistPhoto(
+      parsed.buffer,
+      parsed.extension,
+      input.preferredPhotoName,
+      input.schoolId
+    );
 
     return {
       photoKey,
@@ -170,6 +183,43 @@ export class FaceIntelligenceService {
       ticket.intakeToken === args.intakeToken;
     if (!valid) return null;
     this.cachedAnalyses.delete(args.ticketId);
+    return ticket.result;
+  }
+
+  createPublicAnalysisTicket(args: {
+    schoolId: string;
+    intakeToken: string;
+    sessionId?: string;
+    result: PhotoIntelligenceResult;
+  }) {
+    this.cleanupExpiredTickets();
+    const id = randomUUID();
+    this.publicCachedAnalyses.set(id, {
+      id,
+      schoolId: args.schoolId,
+      intakeToken: args.intakeToken,
+      sessionId: args.sessionId,
+      result: args.result,
+      expiresAt: Date.now() + this.analysisTtlMs
+    });
+    return id;
+  }
+
+  consumePublicAnalysisTicket(args: {
+    ticketId: string;
+    schoolId: string;
+    intakeToken: string;
+    sessionId?: string;
+  }) {
+    this.cleanupExpiredTickets();
+    const ticket = this.publicCachedAnalyses.get(args.ticketId);
+    if (!ticket) return null;
+    const valid =
+      ticket.schoolId === args.schoolId &&
+      ticket.intakeToken === args.intakeToken &&
+      (!ticket.sessionId || ticket.sessionId === args.sessionId);
+    if (!valid) return null;
+    this.publicCachedAnalyses.delete(args.ticketId);
     return ticket.result;
   }
 
@@ -238,18 +288,36 @@ export class FaceIntelligenceService {
     throw new BadRequestException("Unable to parse JPEG dimensions");
   }
 
-  private async persistPhoto(buffer: Buffer, extension: string) {
+  private async persistPhoto(
+    buffer: Buffer,
+    extension: string,
+    preferredPhotoName?: string,
+    schoolId?: string
+  ) {
     const rootDir = process.env.LOCAL_UPLOAD_DIR || join(process.cwd(), "uploads");
     const now = new Date();
     const year = now.getUTCFullYear();
     const month = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const relativeDir = join("intake", String(year), month);
+    const schoolFolder = this.sanitizeFileName(schoolId) || "unassigned-school";
+    const uploadFolder = randomUUID();
+    const relativeDir = join("intake", schoolFolder, String(year), month, uploadFolder);
     const absoluteDir = join(rootDir, relativeDir);
     await mkdir(absoluteDir, { recursive: true });
-    const fileName = `${randomUUID()}.${extension}`;
+    const baseName = this.sanitizeFileName(preferredPhotoName) || "student-photo";
+    const fileName = `${baseName}.${extension}`;
     const relativePath = join(relativeDir, fileName).replace(/\\/g, "/");
     await writeFile(join(rootDir, relativePath), buffer);
     return `local://${relativePath}`;
+  }
+
+  private sanitizeFileName(value?: string) {
+    const normalized = (value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/-{2,}/g, "-");
+    return normalized.slice(0, 80);
   }
 
   private async detectFaceWithAws(buffer: Buffer): Promise<AwsFaceQuality | null> {
@@ -387,6 +455,11 @@ export class FaceIntelligenceService {
     for (const [key, value] of this.cachedAnalyses.entries()) {
       if (value.expiresAt < now) {
         this.cachedAnalyses.delete(key);
+      }
+    }
+    for (const [key, value] of this.publicCachedAnalyses.entries()) {
+      if (value.expiresAt < now) {
+        this.publicCachedAnalyses.delete(key);
       }
     }
   }

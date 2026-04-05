@@ -1,4 +1,5 @@
-import { IsEmail, IsIn, IsOptional, IsString } from "class-validator";
+import { InstitutionType } from "@prisma/client";
+import { IsEmail, IsEnum, IsIn, IsObject, IsOptional, IsString } from "class-validator";
 
 export class UpdateSchoolDto {
   @IsOptional()
@@ -40,6 +41,14 @@ export class UpdateSchoolDto {
   @IsOptional()
   @IsString()
   salesOwnerId?: string;
+
+  @IsOptional()
+  @IsEnum(InstitutionType)
+  institutionType?: InstitutionType;
+
+  @IsOptional()
+  @IsObject()
+  registrationData?: Record<string, unknown>;
 
   @IsOptional()
   @IsIn(["ACTIVE", "INACTIVE"])

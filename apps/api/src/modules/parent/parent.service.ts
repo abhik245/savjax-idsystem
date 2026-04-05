@@ -60,11 +60,31 @@ export class ParentService {
     const { parent, link } = await this.resolveParentAndLink(
       user,
       dto.intakeToken,
-      dto.parentMobile,
-      dto.className,
+      dto.parentMobile || dto.mobile,
+      dto.className || dto.segmentPrimaryValue,
       false,
-      dto.section
+      dto.section || dto.segmentSecondaryValue
     );
+
+    const className = this.normalizeString(dto.className || dto.segmentPrimaryValue) || (link.className === "ALL" ? "" : link.className);
+    const section = this.normalizeString(dto.section || dto.segmentSecondaryValue) || (link.section === "ALL" ? "" : link.section);
+    const fullName = this.normalizeString(dto.fullName);
+    const parentName = this.normalizeString(dto.parentName) || "Parent";
+    const parentMobile =
+      this.normalizeMobile(dto.parentMobile || dto.mobile) ||
+      this.normalizeMobile(this.dataProtectionService.decryptText(parent.mobileCiphertext, parent.mobile));
+    const address = this.normalizeString(dto.address);
+    const rollNumber = this.normalizeString(dto.rollNumber) || (await this.generateAutoRollNumber(link.id));
+    const workflowRequired = this.readBoolean(
+      this.asRecord(this.asRecord(link.formSchema).submissionModel),
+      "workflowRequired",
+      true
+    );
+
+    if (!fullName) throw new BadRequestException("Student name is required");
+    if (!className) throw new BadRequestException("Class is required");
+    if (!section) throw new BadRequestException("Section is required");
+    if (!parentMobile) throw new BadRequestException("Parent mobile is required");
 
     const siblingLimit = link.allowSiblings ? link.maxStudentsPerParent : 1;
     const siblingCount = await this.prisma.student.count({
@@ -75,10 +95,10 @@ export class ParentService {
     }
 
     const duplicateKey = [
-      dto.fullName.trim().toLowerCase(),
-      dto.className.trim().toUpperCase(),
-      dto.section.trim().toUpperCase(),
-      dto.rollNumber.trim().toLowerCase()
+      fullName.toLowerCase(),
+      className.toUpperCase(),
+      section.toUpperCase(),
+      rollNumber.toLowerCase()
     ].join("|");
 
     const duplicateExists = await this.prisma.student.findFirst({
@@ -105,28 +125,24 @@ export class ParentService {
         photoBgPreference: link.photoBgPreference
       }));
 
-    const parentName = dto.parentName.trim();
-    const parentMobile = dto.parentMobile.trim();
-    const address = dto.address.trim();
-
     const student = await this.prisma.student.create({
       data: {
         schoolId: link.schoolId,
         parentId: parent.id,
         intakeLinkId: link.id,
-        fullName: dto.fullName.trim(),
+        fullName,
         parentName: this.dataProtectionService.maskName(parentName) || parentName,
         parentNameCiphertext: this.dataProtectionService.encryptText(parentName),
         parentMobile: this.dataProtectionService.maskPhone(parentMobile) || parentMobile,
         parentMobileCiphertext: this.dataProtectionService.encryptText(parentMobile),
-        className: dto.className.trim().toUpperCase(),
-        section: dto.section.trim().toUpperCase(),
-        rollNumber: dto.rollNumber.trim(),
+        className: className.toUpperCase(),
+        section: section.toUpperCase(),
+        rollNumber,
         address: this.dataProtectionService.maskAddress(address) || address,
         addressCiphertext: this.dataProtectionService.encryptText(address),
         photoKey: photo.photoKey,
         status: StudentStatus.SUBMITTED,
-        intakeStage: IntakeSubmissionStage.SUBMITTED,
+        intakeStage: workflowRequired ? IntakeSubmissionStage.UNDER_REVIEW : IntakeSubmissionStage.SUBMITTED,
         duplicateKey,
         duplicateFlag: !!duplicateExists,
         photoQualityStatus: photo.photoQualityStatus,
@@ -141,29 +157,31 @@ export class ParentService {
         submittedAt: new Date(),
         payloadJson: {
           intakeToken: dto.intakeToken,
-          fullName: dto.fullName,
-          className: dto.className,
-          section: dto.section,
-          rollNumber: dto.rollNumber,
+          fullName,
+          className,
+          section,
+          rollNumber,
           campaignName: link.campaignName,
           institutionType: link.institutionType,
           audience: link.audience,
+          stage: workflowRequired ? IntakeSubmissionStage.UNDER_REVIEW : IntakeSubmissionStage.SUBMITTED,
           photoQualityStatus: photo.photoQualityStatus,
           photoQualityScore: photo.photoQualityScore,
           photoWarnings: this.faceIntelligenceService.getWarnings(photo)
         },
         payloadCiphertext: this.dataProtectionService.encryptJson({
           intakeToken: dto.intakeToken,
-          fullName: dto.fullName,
-          parentName: dto.parentName,
-          parentMobile: dto.parentMobile,
-          className: dto.className,
-          section: dto.section,
-          rollNumber: dto.rollNumber,
-          address: dto.address,
+          fullName,
+          parentName,
+          parentMobile,
+          className,
+          section,
+          rollNumber,
+          address,
           campaignName: link.campaignName,
           institutionType: link.institutionType,
           audience: link.audience,
+          stage: workflowRequired ? IntakeSubmissionStage.UNDER_REVIEW : IntakeSubmissionStage.SUBMITTED,
           photoQualityStatus: photo.photoQualityStatus,
           photoQualityScore: photo.photoQualityScore,
           photoWarnings: this.faceIntelligenceService.getWarnings(photo)
@@ -260,7 +278,7 @@ export class ParentService {
     });
     if (!parent) throw new ForbiddenException("Parent profile not found");
     const resolvedParentMobile = this.dataProtectionService.decryptText(parent.mobileCiphertext, parent.mobile);
-    if (parentMobile && resolvedParentMobile !== parentMobile) {
+    if (parentMobile && this.normalizeMobile(resolvedParentMobile) !== this.normalizeMobile(parentMobile)) {
       throw new ForbiddenException("Parent mobile mismatch");
     }
 
@@ -284,6 +302,33 @@ export class ParentService {
     }
 
     return { parent, link };
+  }
+
+  private async generateAutoRollNumber(intakeLinkId: string) {
+    const count = await this.prisma.student.count({
+      where: { intakeLinkId, deletedAt: null }
+    });
+    return `ID-${String(count + 1).padStart(4, "0")}`;
+  }
+
+  private asRecord(value: unknown) {
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  }
+
+  private readBoolean(record: Record<string, unknown>, key: string, fallback = false) {
+    const value = record[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") return value.trim().toLowerCase() === "true";
+    return fallback;
+  }
+
+  private normalizeString(value: unknown) {
+    return typeof value === "string" ? value.trim() : "";
+  }
+
+  private normalizeMobile(value: unknown) {
+    const digits = this.normalizeString(value).replace(/\D/g, "");
+    return digits.length === 10 ? digits : "";
   }
 
   private hydrateStudentSensitiveFields<

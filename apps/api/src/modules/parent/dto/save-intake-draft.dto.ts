@@ -1,21 +1,13 @@
-import { IsOptional, IsString, Matches, MinLength } from "class-validator";
+import { IsOptional, IsString, Matches } from "class-validator";
 
-export class SubmitStudentDto {
+export class SaveIntakeDraftDto {
+  @IsOptional()
   @IsString()
-  intakeToken!: string;
-
-  @IsString()
-  @MinLength(2)
-  fullName!: string;
+  fullName?: string;
 
   @IsOptional()
   @IsString()
-  @MinLength(2)
   parentName?: string;
-
-  @IsOptional()
-  @Matches(/^\d{10}$/)
-  parentMobile?: string;
 
   @IsOptional()
   @Matches(/^\d{10}$/)
@@ -64,20 +56,4 @@ export class SubmitStudentDto {
   @IsOptional()
   @IsString()
   segmentSecondaryValue?: string;
-
-  @IsOptional()
-  @IsString()
-  photoKey?: string;
-
-  @IsOptional()
-  @IsString()
-  photoDataUrl?: string;
-
-  @IsOptional()
-  @IsString()
-  photoAnalysisId?: string;
-
-  @IsOptional()
-  @IsString()
-  preferredPhotoName?: string;
 }
