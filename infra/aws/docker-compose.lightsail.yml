@@ -1,0 +1,126 @@
+name: nexid
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      APP_DOMAIN: ${APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY}
+      ASSET_SIGNING_SECRET: ${ASSET_SIGNING_SECRET}
+      DIGITAL_ID_SECRET: ${DIGITAL_ID_SECRET}
+      CORS_ORIGIN: https://${APP_DOMAIN}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-lax}
+      AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:-}
+      AUTH_DEV_EXPOSE_OTP: ${AUTH_DEV_EXPOSE_OTP:-false}
+      AUTH_DEV_EXPOSE_RESET_TOKEN: ${AUTH_DEV_EXPOSE_RESET_TOKEN:-false}
+      DEV_MASTER_OTP: ${DEV_MASTER_OTP:-}
+      LOCAL_UPLOAD_DIR: /mnt/uploads
+      PHOTO_MAX_MB: ${PHOTO_MAX_MB:-40}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_VERIFY_SERVICE_SID: ${TWILIO_VERIFY_SERVICE_SID:-}
+      TWILIO_VERIFY_DEFAULT_COUNTRY_CODE: ${TWILIO_VERIFY_DEFAULT_COUNTRY_CODE:-+91}
+      TWILIO_VERIFY_CHANNEL: ${TWILIO_VERIFY_CHANNEL:-sms}
+      AWS_REKOGNITION_ENABLED: ${AWS_REKOGNITION_ENABLED:-false}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+    volumes:
+      - uploads_data:/mnt/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const http=require('http');const req=http.get('http://127.0.0.1:4000/api/v2/health',res=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: https://${API_DOMAIN}/api/v2
+        NEXT_PUBLIC_EXPOSE_DEV_OTP: ${NEXT_PUBLIC_EXPOSE_DEV_OTP:-false}
+        NEXT_PUBLIC_EXPOSE_DEV_AUTH_HINTS: ${NEXT_PUBLIC_EXPOSE_DEV_AUTH_HINTS:-false}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const http=require('http');const req=http.get('http://127.0.0.1:3000/login',res=>process.exit(res.statusCode<500?0:1));req.on('error',()=>process.exit(1));"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  uploads_data:
