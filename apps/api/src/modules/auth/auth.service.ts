@@ -15,6 +15,8 @@ import { AccessControlService } from "../../common/access/access-control.service
 import { AuthenticatedUser } from "../../common/auth/auth-user.type";
 import { Role } from "../../common/enums/role.enum";
 import { DataProtectionService } from "../../common/services/data-protection.service";
+import { RateLimiterService } from "../../common/services/rate-limiter.service";
+import { TwilioVerifyService } from "../../common/services/twilio-verify.service";
 import { getPermissionsForRole } from "../../common/auth/permission-matrix";
 import {
   isCompanyAdminRole,
@@ -30,7 +32,7 @@ import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { SendOtpDto } from "./dto/send-otp.dto";
 import { VerifyOtpDto } from "./dto/verify-otp.dto";
 import * as bcrypt from "bcrypt";
-import { createHash, randomBytes } from "crypto";
+import { createHash, createHmac, randomBytes } from "crypto";
 import { JwtPayload } from "./types/jwt-payload.type";
 
 const OTP_WINDOW_MS = 10 * 60 * 1000;
@@ -58,14 +60,15 @@ type AuthResponseUser = {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly rateMap = new Map<string, number[]>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly accessControlService: AccessControlService,
-    private readonly dataProtectionService: DataProtectionService
+    private readonly dataProtectionService: DataProtectionService,
+    private readonly rateLimiter: RateLimiterService,
+    private readonly twilioVerifyService: TwilioVerifyService
   ) {}
 
   me(user: AuthenticatedUser) {
@@ -85,8 +88,8 @@ export class AuthService {
 
   async login(dto: LoginDto, req: Request, res: Response, portal: Portal = "all") {
     const email = dto.email.toLowerCase().trim();
-    this.assertRateLimit(`login:${email}`, LOGIN_ATTEMPT_LIMIT, LOGIN_WINDOW_MS, "Too many login attempts");
-    this.assertRateLimit(
+    await this.assertRateLimit(`login:${email}`, LOGIN_ATTEMPT_LIMIT, LOGIN_WINDOW_MS, "Too many login attempts");
+    await this.assertRateLimit(
       `login-ip:${this.getIp(req)}`,
       LOGIN_ATTEMPT_LIMIT * 2,
       LOGIN_WINDOW_MS,
@@ -147,9 +150,11 @@ export class AuthService {
     const ip = this.getIp(req);
     await this.assertParentOtpSendAllowed(dto.mobile, ip, req.headers["user-agent"] || undefined);
     const isProd = this.configService.get("NODE_ENV", "development") === "production";
-    const code = isProd
-      ? String(Math.floor(100000 + Math.random() * 900000))
-      : this.configService.get("DEV_MASTER_OTP", "123456");
+    const useTwilioVerify = this.twilioVerifyService.shouldUseVerify();
+    const code = useTwilioVerify ? undefined : this.configService.get("DEV_MASTER_OTP", "123456");
+    const challengeSeed = useTwilioVerify
+      ? (await this.twilioVerifyService.sendVerification(dto.mobile)).sid || randomBytes(16).toString("hex")
+      : code || randomBytes(16).toString("hex");
 
     await this.prisma.$transaction([
       this.prisma.otpChallenge.updateMany({
@@ -159,7 +164,7 @@ export class AuthService {
       this.prisma.otpChallenge.create({
         data: {
           mobile: dto.mobile,
-          otpHash: this.hash(code),
+          otpHash: this.hash(challengeSeed),
           expiresAt: new Date(Date.now() + 5 * 60 * 1000),
           requestedIp: ip,
           requestedAgent: req.headers["user-agent"] || undefined
@@ -176,7 +181,9 @@ export class AuthService {
     return {
       message: "OTP sent",
       devOtp:
-        !isProd && this.configService.get("AUTH_DEV_EXPOSE_OTP", "true") === "true" ? code : undefined
+        !useTwilioVerify && !isProd && this.configService.get("AUTH_DEV_EXPOSE_OTP", "true") === "true"
+          ? code
+          : undefined
     };
   }
 
@@ -215,7 +222,56 @@ export class AuthService {
       });
       throw new UnauthorizedException("OTP expired");
     }
-    if (challenge.otpHash !== this.hash(dto.otp)) {
+    const useTwilioVerify = this.twilioVerifyService.shouldUseVerify();
+    if (useTwilioVerify) {
+      const verification = await this.twilioVerifyService.checkVerification(dto.mobile, dto.otp);
+      if (verification.expiredOrMissing) {
+        await this.prisma.otpChallenge.update({
+          where: { id: challenge.id },
+          data: { consumedAt: new Date() }
+        });
+        await this.audit({
+          action: "OTP_VERIFY_FAILED",
+          entityId: this.otpAuditEntityId(dto.mobile),
+          ip,
+          userAgent: req.headers["user-agent"] || undefined,
+          newValue: {
+            reason: "EXPIRED_CHALLENGE",
+            providerStatus: verification.status
+          }
+        });
+        throw new UnauthorizedException("OTP expired");
+      }
+      if (verification.approved) {
+        await this.prisma.otpChallenge.update({
+          where: { id: challenge.id },
+          data: { consumedAt: new Date() }
+        });
+      } else {
+        const nextAttempts = challenge.attempts + 1;
+        await this.prisma.otpChallenge.update({
+          where: { id: challenge.id },
+          data: {
+            attempts: nextAttempts,
+            ...(nextAttempts >= challenge.maxAttempts ? { consumedAt: new Date() } : {})
+          }
+        });
+        await this.audit({
+          action: "OTP_VERIFY_FAILED",
+          entityId: this.otpAuditEntityId(dto.mobile),
+          ip,
+          userAgent: req.headers["user-agent"] || undefined,
+          newValue: {
+            reason: "INVALID_OTP",
+            attempts: nextAttempts,
+            challengeId: challenge.id,
+            providerStatus: verification.status,
+            providerValid: verification.valid
+          }
+        });
+        throw new UnauthorizedException("Invalid OTP");
+      }
+    } else if (challenge.otpHash !== this.hash(dto.otp)) {
       const nextAttempts = challenge.attempts + 1;
       await this.prisma.otpChallenge.update({
         where: { id: challenge.id },
@@ -237,11 +293,12 @@ export class AuthService {
       });
       throw new UnauthorizedException("Invalid OTP");
     }
-
-    await this.prisma.otpChallenge.update({
-      where: { id: challenge.id },
-      data: { consumedAt: new Date() }
-    });
+    if (!useTwilioVerify) {
+      await this.prisma.otpChallenge.update({
+        where: { id: challenge.id },
+        data: { consumedAt: new Date() }
+      });
+    }
 
     let user = await this.prisma.user.findUnique({ where: { email: `${dto.mobile}@parent.local` } });
     if (!user) {
@@ -344,7 +401,7 @@ export class AuthService {
 
   async forgotPassword(dto: ForgotPasswordDto, req: Request) {
     const email = dto.email.toLowerCase().trim();
-    this.assertRateLimit(`forgot:${email}`, 6, OTP_WINDOW_MS, "Too many requests");
+    await this.assertRateLimit(`forgot:${email}`, 6, OTP_WINDOW_MS, "Too many requests");
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || user.deletedAt || !user.isActive) {
       return { message: "If your email exists, a reset link has been sent." };
@@ -577,8 +634,9 @@ export class AuthService {
     });
   }
 
-  private assertRateLimit(key: string, limit: number, windowMs: number, message: string) {
-    if (this.rateLimitExceeded(key, limit, windowMs)) {
+  private async assertRateLimit(key: string, limit: number, windowMs: number, message: string) {
+    const exceeded = await this.rateLimiter.isLimited(key, limit, windowMs);
+    if (exceeded) {
       throw new HttpException(message, HttpStatus.TOO_MANY_REQUESTS);
     }
   }
@@ -655,7 +713,13 @@ export class AuthService {
   }
 
   private hash(input: string) {
-    return createHash("sha256").update(input).digest("hex");
+    // Use HMAC-SHA256 with the application secret so OTP/token hashes
+    // cannot be reversed or pre-computed without the server secret.
+    const secret =
+      this.configService.get<string>("JWT_ACCESS_SECRET") ||
+      this.configService.get<string>("FIELD_ENCRYPTION_KEY") ||
+      "dev-fallback-hmac-key";
+    return createHmac("sha256", secret).update(input).digest("hex");
   }
 
   private otpAuditEntityId(mobile: string) {
@@ -669,14 +733,6 @@ export class AuthService {
       mobileHash: this.dataProtectionService.stableHash(normalized),
       mobileCiphertext: this.dataProtectionService.encryptText(normalized)
     };
-  }
-
-  private rateLimitExceeded(key: string, limit = OTP_SEND_LIMIT, windowMs = OTP_WINDOW_MS) {
-    const now = Date.now();
-    const history = (this.rateMap.get(key) ?? []).filter((ts) => now - ts < windowMs);
-    history.push(now);
-    this.rateMap.set(key, history);
-    return history.length > limit;
   }
 
   private readCookie(req: Request, name: string) {

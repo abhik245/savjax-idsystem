@@ -1,0 +1,64 @@
+{
+  "family": "savjax-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/savjax-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/savjax-ecs-task-role",
+  "containerDefinitions": [
+    {
+      "name": "nexid-api",
+      "image": "123456789012.dkr.ecr.ap-south-1.amazonaws.com/savjax-api:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 4000,
+          "hostPort": 4000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "4000" },
+        { "name": "LOCAL_UPLOAD_DIR", "value": "/mnt/uploads" }
+      ],
+      "secrets": [
+        { "name": "DATABASE_URL", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:savjax/database-url" },
+        { "name": "JWT_ACCESS_SECRET", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:savjax/jwt-access-secret" },
+        { "name": "FIELD_ENCRYPTION_KEY", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:savjax/field-encryption-key" },
+        { "name": "ASSET_SIGNING_SECRET", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:savjax/asset-signing-secret" },
+        { "name": "DIGITAL_ID_SECRET", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:savjax/digital-id-secret" },
+        { "name": "CORS_ORIGIN", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:savjax/cors-origin" }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "uploads",
+          "containerPath": "/mnt/uploads",
+          "readOnly": false
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/savjax-api",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "uploads",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-1234567890abcdef0",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "fsap-1234567890abcdef0",
+          "iam": "ENABLED"
+        }
+      }
+    }
+  ]
+}

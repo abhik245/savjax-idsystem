@@ -43,3 +43,16 @@ docs/legacy/
 **/.generated/
 **/tmp/
 **/temp/
+
+# SSH / TLS private keys and certificates — NEVER commit these
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.pub
+*.ppk
+lightsail-*.pem
+lightsail-*.pub
+lightsail-*.key
