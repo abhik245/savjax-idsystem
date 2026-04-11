@@ -14,36 +14,48 @@ const isDev = process.env.NODE_ENV !== "production";
 
 /**
  * Content Security Policy
- * - 'nonce-based' approach would require middleware; use strict-dynamic for
- *   Next.js inline scripts instead.
- * - 'unsafe-inline' for styles is required by Tailwind in dev.
- * - Tighten further once a nonce-based approach is adopted.
+ *
+ * Next.js injects inline <script> tags for hydration that cannot be
+ * fingerprinted with hashes at build time without a custom nonce-based
+ * middleware. Until that middleware is in place, we must allow
+ * 'unsafe-inline' for scripts in BOTH dev and prod so the app renders.
+ *
+ * 'unsafe-eval' is restricted to dev only (needed by webpack HMR).
+ *
+ * Other directives remain strict:
+ *  - object-src, frame-src, frame-ancestors all locked to 'none'
+ *  - connect-src limited to self + API origin
+ *  - img-src allows data: and blob: for photo previews and canvas exports
  */
 const cspDirectives = [
   "default-src 'self'",
-  // Scripts: self + Next.js internals
+  // Scripts: unsafe-inline is required for Next.js hydration scripts.
+  // unsafe-eval is restricted to dev (webpack HMR) only.
   isDev
-    ? "script-src 'self' 'unsafe-eval' 'unsafe-inline'"
-    : "script-src 'self' 'strict-dynamic'",
-  // Styles: Tailwind needs unsafe-inline in both dev and prod (no CSS-in-JS)
+    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+    : "script-src 'self' 'unsafe-inline'",
+  // Styles: Tailwind requires unsafe-inline
   "style-src 'self' 'unsafe-inline'",
-  // Images: self + data URIs (for base64 previews) + blob (for canvas exports)
+  // Images: data URIs for base64 photo previews, blob for canvas/camera
   "img-src 'self' data: blob:",
-  // Fonts: self only
+  // Fonts served from same origin
   "font-src 'self'",
-  // Media (camera feed is blob:)
+  // Camera feed is a blob: MediaStream URL
   "media-src 'self' blob:",
-  // Workers and canvas blobs
+  // Web workers and canvas toBlob()
   "worker-src 'self' blob:",
-  // API calls
+  // API fetch calls only to our own API origin
   `connect-src 'self' ${apiOrigin}`,
-  // No frames
+  // No iframes
   "frame-src 'none'",
   "frame-ancestors 'none'",
-  // No plugins
+  // No Flash / plugins
   "object-src 'none'",
+  // Disallow base tag hijacking
   "base-uri 'self'",
+  // Only allow form submissions to self
   "form-action 'self'",
+  // Upgrade any accidental http:// sub-resource requests
   "upgrade-insecure-requests"
 ]
   .filter(Boolean)
@@ -54,16 +66,15 @@ const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
 
-  // Disable the "Powered-By: Next.js" header
+  // Hide "X-Powered-By: Next.js"
   poweredByHeader: false,
 
-  // Compress responses
+  // Brotli / gzip compression
   compress: true,
 
   async headers() {
     return [
       {
-        // Apply to all routes
         source: "/(.*)",
         headers: [
           { key: "X-Frame-Options", value: "DENY" },
