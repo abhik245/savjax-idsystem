@@ -10,7 +10,7 @@
     "prisma:migrate":  "prisma migrate dev",
     "migrate:deploy":  "prisma migrate deploy",
     "prisma:seed":  "ts-node prisma/seed.ts",
-    "create:super-admin":  "ts-node scripts/create-super-admin.ts",
+    "create:super-admin":  "node scripts/create-super-admin.js",
     "test:security":  "ts-node test/security-smoke.ts",
                     "test:security:http":  "ts-node test/security-http.ts",
                     "test:auth:reset":  "ts-node test/reset-auth-state.ts"

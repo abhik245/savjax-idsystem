@@ -162,7 +162,6 @@ const DEFAULT_CAPTURE_ASSISTANT: CaptureAssistantState = {
 };
 
 const CAPTURE_STABILITY_TARGET = 2;
-const AUTO_CAPTURE_DELAY_MS = 220;
 const CAMERA_ANALYSIS_INTERVAL_MS = 180;
 const MAX_PRINT_PROCESSING_EDGE = 1400;
 const MIN_PRINT_EXPORT_EDGE = 600;
@@ -200,8 +199,6 @@ function IntakePortalInner() {
   const [deviceId, setDeviceId] = useState("");
   const [guidance, setGuidance] = useState("Allow camera access and keep the face centered.");
   const [captureAssistant, setCaptureAssistant] = useState<CaptureAssistantState>(DEFAULT_CAPTURE_ASSISTANT);
-  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
-  const [autoCapturing, setAutoCapturing] = useState(false);
   const [captureStability, setCaptureStability] = useState(0);
   const [savedSubmissions, setSavedSubmissions] = useState(0);
   const [capturedDataUrl, setCapturedDataUrl] = useState("");
@@ -230,13 +227,9 @@ function IntakePortalInner() {
   const streamRef = useRef<MediaStream | null>(null);
   const faceBoxRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const analysisTimerRef = useRef<number | null>(null);
-  const autoCaptureTimerRef = useRef<number | null>(null);
   const captureReadyRef = useRef(false);
-  const autoCaptureEnabledRef = useRef(true);
-  const autoCapturingRef = useRef(false);
   const captureInFlightRef = useRef(false);
   const stableFrameCountRef = useRef(0);
-  const stepRef = useRef<Step>("auth");
 
   const actorType = sessionContext?.session.actorType || publicMeta?.actorType || "PARENT";
   const currentSchema = sessionContext?.dataSchema || {};
@@ -282,24 +275,11 @@ function IntakePortalInner() {
   }, [progressSteps, step]);
 
   useEffect(() => {
-    stepRef.current = step;
-  }, [step]);
-
-  useEffect(() => {
-    autoCaptureEnabledRef.current = autoCaptureEnabled;
-  }, [autoCaptureEnabled]);
-
-  useEffect(() => {
-    autoCapturingRef.current = autoCapturing;
-  }, [autoCapturing]);
-
-  useEffect(() => {
     if (tokenFromUrl) {
       void loadPublicEntry(tokenFromUrl);
     }
     return () => {
       stopCamera();
-      if (autoCaptureTimerRef.current) window.clearTimeout(autoCaptureTimerRef.current);
       if (analysisTimerRef.current) window.clearInterval(analysisTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -514,13 +494,6 @@ function IntakePortalInner() {
     }
   }
 
-  function clearAutoCaptureTimer() {
-    if (autoCaptureTimerRef.current) {
-      window.clearTimeout(autoCaptureTimerRef.current);
-      autoCaptureTimerRef.current = null;
-    }
-  }
-
   function resetCaptureReadiness() {
     stableFrameCountRef.current = 0;
     setCaptureStability(0);
@@ -531,24 +504,6 @@ function IntakePortalInner() {
     captureReadyRef.current = next.ready;
     setCaptureAssistant(next);
     setGuidance(next.message);
-    const autoCaptureSupported = next.guidanceMode !== "manual";
-
-    if (!next.ready || !autoCaptureSupported || !autoCaptureEnabledRef.current || stepRef.current !== "photo") {
-      clearAutoCaptureTimer();
-      setAutoCapturing(false);
-      autoCapturingRef.current = false;
-      return;
-    }
-
-    if (autoCaptureTimerRef.current || autoCapturingRef.current) return;
-    autoCaptureTimerRef.current = window.setTimeout(() => {
-      autoCaptureTimerRef.current = null;
-      if (!captureReadyRef.current || stepRef.current !== "photo") return;
-      setAutoCapturing(true);
-      autoCapturingRef.current = true;
-      setStatus("Locked in. Capturing now.");
-      void capturePhoto("auto");
-    }, AUTO_CAPTURE_DELAY_MS);
   }
 
   async function processSelectedPhoto(dataUrl: string) {
@@ -584,10 +539,7 @@ function IntakePortalInner() {
       setError("");
       setStatus("");
     }
-    clearAutoCaptureTimer();
     resetCaptureReadiness();
-    setAutoCapturing(false);
-    autoCapturingRef.current = false;
     captureInFlightRef.current = false;
     setCaptureAssistant(DEFAULT_CAPTURE_ASSISTANT);
     setGuidance(DEFAULT_CAPTURE_ASSISTANT.message);
@@ -626,9 +578,6 @@ function IntakePortalInner() {
   }
 
   function stopCamera() {
-    clearAutoCaptureTimer();
-    setAutoCapturing(false);
-    autoCapturingRef.current = false;
     resetCaptureReadiness();
     faceBoxRef.current = null;
     if (analysisTimerRef.current) {
@@ -690,10 +639,10 @@ function IntakePortalInner() {
                 : backgroundBlocking
                   ? backgroundGuidance(photoBackgroundPreference)
                   : !backgroundGood
-                    ? "Plain background preferred, but you can continue. Hold steady for auto capture."
+                    ? "Plain background preferred, but you can continue. Hold steady until capture is ready."
                     : stableFrameCount < CAPTURE_STABILITY_TARGET
-                      ? `Hold steady for auto capture (${stableFrameCount}/${CAPTURE_STABILITY_TARGET})`
-                      : "Face aligned. Auto capture is ready."
+                      ? `Hold steady for capture readiness (${stableFrameCount}/${CAPTURE_STABILITY_TARGET})`
+                      : "Face aligned. Capture now."
       });
       return;
     }
@@ -756,18 +705,16 @@ function IntakePortalInner() {
                 ? "Plain background preferred, but you can continue. Keep the face centered and hold steady."
               : stableFrameCount < CAPTURE_STABILITY_TARGET
                 ? `Hold steady for a clear capture (${stableFrameCount}/${CAPTURE_STABILITY_TARGET})`
-                : autoCaptureEnabledRef.current
-                  ? "Hold steady. Auto capture is ready."
-                  : "Face clear. Capture now."
+                : "Face clear. Capture now."
     });
   }
 
-  async function capturePhoto(trigger: "manual" | "auto" = "manual") {
+  async function capturePhoto() {
     const video = videoRef.current;
     const canvas = captureCanvasRef.current;
     if (!video || !canvas) return;
     if (captureInFlightRef.current) return;
-    if (trigger === "manual" && !captureReadyRef.current) {
+    if (!captureReadyRef.current) {
       setError("Wait for face, lighting, and background guidance to turn ready before capturing.");
       return;
     }
@@ -778,7 +725,6 @@ function IntakePortalInner() {
       return;
     }
 
-    clearAutoCaptureTimer();
     const crop = getPassportCropRect(video.videoWidth, video.videoHeight, faceBoxRef.current);
     canvas.width = crop.sw;
     canvas.height = crop.sh;
@@ -789,8 +735,6 @@ function IntakePortalInner() {
     try {
       await processSelectedPhoto(dataUrl);
     } finally {
-      setAutoCapturing(false);
-      autoCapturingRef.current = false;
       captureInFlightRef.current = false;
     }
   }
@@ -1165,14 +1109,14 @@ function IntakePortalInner() {
                   <p className="m-0 font-medium text-[var(--text-primary)]">AI guidance</p>
                   <p className="m-0 mt-1">{guidance}</p>
                   <p className="m-0 mt-2 text-[11px] text-[var(--text-muted)]">
-                    Parents on mobile should keep the face steady in the middle. Auto capture locks only after face, center, light, and background checks all pass together.
+                    Parents on mobile should keep the face steady in the middle. Capture only after face, center, light, and background checks all show ready together.
                   </p>
                   <div className="mt-2 rounded-lg border border-[var(--line-soft)] px-2 py-2 text-[11px]">
                     <p className="m-0 text-[var(--text-primary)]">
-                      Readiness hold: <span className="font-medium">{captureStability}/{CAPTURE_STABILITY_TARGET}</span>
+                      Capture readiness: <span className="font-medium">{captureStability}/{CAPTURE_STABILITY_TARGET}</span>
                     </p>
                     <p className="m-0 mt-1 text-[var(--text-muted)]">
-                      Hold still very briefly while the frame locks in.
+                      Hold still very briefly until the frame is ready for manual capture.
                     </p>
                   </div>
                   <div className="mt-3 space-y-2">
@@ -1204,33 +1148,6 @@ function IntakePortalInner() {
                       }
                     />
                   </div>
-                </div>
-                <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] p-3 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="m-0 font-medium text-[var(--text-primary)]">Auto capture</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (autoCaptureEnabled) {
-                          clearAutoCaptureTimer();
-                          setAutoCapturing(false);
-                        }
-                        setAutoCaptureEnabled((prev) => !prev);
-                      }}
-                      className={`rounded-full border px-3 py-1 text-[11px] ${
-                        autoCaptureEnabled
-                          ? "border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] text-white"
-                          : "border-[var(--line-soft)] text-[var(--text-muted)]"
-                      }`}
-                    >
-                      {autoCaptureEnabled ? "ON" : "OFF"}
-                    </button>
-                  </div>
-                  <p className="m-0 mt-2 text-[var(--text-muted)]">
-                    {captureAssistant.guidanceMode === "manual"
-                      ? "Auto capture is not available in this browser. Manual capture is available."
-                      : "As soon as the frame is clean and stable, capture happens automatically."}
-                  </p>
                 </div>
                 <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] p-3 text-xs">
                   <p className="m-0 mb-2 flex items-center gap-2">
@@ -1272,11 +1189,11 @@ function IntakePortalInner() {
                   </div>
                 ) : null}
                 <button
-                  onClick={() => void capturePhoto("manual")}
-                  disabled={(captureAssistant.guidanceMode !== "manual" && !captureAssistant.ready) || autoCapturing}
+                  onClick={() => void capturePhoto()}
+                  disabled={captureAssistant.guidanceMode !== "manual" && !captureAssistant.ready}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-4 py-2 text-sm font-semibold disabled:opacity-50"
                 >
-                  <Camera size={15} /> {autoCapturing ? "Auto capturing..." : "Capture"}
+                  <Camera size={15} /> Capture
                 </button>
                 {sessionContext.submissionModel.allowPhotoUpload ? (
                   <label className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-[var(--line-soft)] px-4 py-2 text-sm">

@@ -25,6 +25,7 @@ import { Role } from "../../common/enums/role.enum";
 import { DataProtectionService } from "../../common/services/data-protection.service";
 import { FaceIntelligenceService } from "../../common/services/face-intelligence.service";
 import { TemplateRenderService } from "../../common/services/template-render.service";
+import { TwilioVerifyService } from "../../common/services/twilio-verify.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AnalyzePhotoDto } from "./dto/analyze-photo.dto";
 import { SaveIntakeDraftDto } from "./dto/save-intake-draft.dto";
@@ -55,7 +56,8 @@ export class PublicIntakeService {
     private readonly faceIntelligenceService: FaceIntelligenceService,
     private readonly dataProtectionService: DataProtectionService,
     private readonly templateRenderService: TemplateRenderService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly twilioVerifyService: TwilioVerifyService
   ) {}
 
   async startOtp(dto: StartIntakeOtpDto, context: RequestContext = {}) {
@@ -65,7 +67,11 @@ export class PublicIntakeService {
 
     await this.assertOtpSendAllowed(link, mobileNumber, context);
 
-    const otpCode = this.generateOtpCode();
+    const useTwilioVerify = this.twilioVerifyService.shouldUseVerify();
+    const otpCode = useTwilioVerify ? undefined : this.generateOtpCode();
+    const challengeSeed = useTwilioVerify
+      ? (await this.twilioVerifyService.sendVerification(mobileNumber)).sid || randomBytes(16).toString("hex")
+      : otpCode || randomBytes(16).toString("hex");
     const submissionModel = this.readSubmissionModel(link);
     const actorType = this.resolveActorType(link, submissionModel);
 
@@ -74,7 +80,7 @@ export class PublicIntakeService {
         campaignId: link.campaignId || null,
         intakeLinkId: link.id,
         mobileNumber,
-        otpHash: this.hash(otpCode),
+        otpHash: this.hash(challengeSeed),
         otpStatus: IntakeOtpStatus.PENDING,
         actorType,
         expiresAt: new Date(Date.now() + OTP_TTL_MS),
@@ -99,7 +105,7 @@ export class PublicIntakeService {
       expiresAt: session.expiresAt,
       maskedMobile: this.maskMobile(mobileNumber),
       message: "OTP sent successfully",
-      devOtp: this.shouldExposeDevOtp() ? otpCode : undefined
+      devOtp: !useTwilioVerify && this.shouldExposeDevOtp() ? otpCode : undefined
     };
   }
 
@@ -141,7 +147,38 @@ export class PublicIntakeService {
 
     await this.assertOtpVerifyAllowed(session.mobileNumber, context);
 
-    if (session.otpHash !== this.hash(dto.otp)) {
+    const useTwilioVerify = this.twilioVerifyService.shouldUseVerify();
+    if (useTwilioVerify) {
+      const verification = await this.twilioVerifyService.checkVerification(session.mobileNumber, dto.otp);
+      if (verification.expiredOrMissing) {
+        await this.expireSession(session.id);
+        await this.auditSession(session.id, "OTP_VERIFY_FAILED", context, {
+          reason: "EXPIRED_SESSION",
+          providerStatus: verification.status
+        });
+        throw new UnauthorizedException("OTP expired");
+      }
+      if (!verification.approved) {
+        const nextAttempts = session.attempts + 1;
+        await this.prisma.intakeAuthSession.update({
+          where: { id: session.id },
+          data: {
+            attempts: nextAttempts,
+            otpStatus: nextAttempts >= session.maxAttempts ? IntakeOtpStatus.FAILED : session.otpStatus,
+            sessionStatus: nextAttempts >= session.maxAttempts ? IntakeSessionStatus.FAILED : session.sessionStatus,
+            expiresAt: nextAttempts >= session.maxAttempts ? new Date() : session.expiresAt
+          }
+        });
+        await this.auditSession(session.id, "OTP_VERIFY_FAILED", context, {
+          reason: "INVALID_OTP",
+          attempts: nextAttempts,
+          maskedMobile: this.maskMobile(session.mobileNumber),
+          providerStatus: verification.status,
+          providerValid: verification.valid
+        });
+        throw new UnauthorizedException("Invalid OTP");
+      }
+    } else if (session.otpHash !== this.hash(dto.otp)) {
       const nextAttempts = session.attempts + 1;
       await this.prisma.intakeAuthSession.update({
         where: { id: session.id },

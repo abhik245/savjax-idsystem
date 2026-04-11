@@ -53,6 +53,8 @@ type SchoolDetailStudent = {
   rollNumber?: string | null;
   parentName?: string | null;
   parentMobile?: string | null;
+  photoKey?: string | null;
+  photoLink?: string | null;
   status: StudentStatus;
   duplicateFlag?: boolean | null;
   createdAt: string;
@@ -333,6 +335,13 @@ export default function SchoolDrillPage() {
     return Array.isArray(raw) ? raw[0] : raw || "";
   }, [params]);
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000/api/v2";
+  const apiOrigin = useMemo(() => {
+    try {
+      return new URL(apiBase).origin;
+    } catch {
+      return typeof window !== "undefined" ? window.location.origin : "http://localhost:4000";
+    }
+  }, [apiBase]);
 
   const [booting, setBooting] = useState(true);
   const [role, setRole] = useState<RoleKey>("SUPER_ADMIN");
@@ -471,6 +480,54 @@ export default function SchoolDrillPage() {
     return data as T;
   }
 
+  function buildStudentPhotoFileName(fullName?: string | null, photoKey?: string | null) {
+    const cleanedName = (fullName || "")
+      .trim()
+      .replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ")
+      .replace(/\s+/g, " ");
+    const fileName = photoKey?.trim().split("/").pop() || "";
+    const extensionMatch = fileName.match(/(\.[a-z0-9]+)$/i);
+    const extension = extensionMatch?.[1] || ".jpg";
+    return `${cleanedName || "student-photo"}${extension}`;
+  }
+
+  function normalizeSignedAssetUrl(rawUrl?: string | null) {
+    const value = (rawUrl || "").trim();
+    if (!value) return "";
+    try {
+      const parsed =
+        value.startsWith("http://") || value.startsWith("https://") ? new URL(value) : new URL(value, apiOrigin);
+      if (!["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname)) {
+        return parsed.toString();
+      }
+      return new URL(`${parsed.pathname}${parsed.search}${parsed.hash}`, apiOrigin).toString();
+    } catch {
+      return value;
+    }
+  }
+
+  async function getSignedPhotoLinkMap(photoKeys: Array<string | null | undefined>) {
+    const uniquePhotoKeys = Array.from(
+      new Set(
+        photoKeys
+          .map((photoKey) => (typeof photoKey === "string" ? photoKey.trim() : ""))
+          .filter(Boolean)
+      )
+    );
+
+    const signedPhotoLinks = new Map<string, string>();
+    await Promise.allSettled(
+      uniquePhotoKeys.map(async (photoKey) => {
+        const signed = await apiRequest<{ signedUrl: string }>(
+          `/platform/security/assets/signed-url?photoKey=${encodeURIComponent(photoKey)}&ttlSeconds=86400`
+        );
+        signedPhotoLinks.set(photoKey, normalizeSignedAssetUrl(signed.signedUrl));
+      })
+    );
+
+    return signedPhotoLinks;
+  }
+
   async function loadAll() {
     setLoading((p) => ({ ...p, detail: true }));
     setError("");
@@ -542,7 +599,17 @@ export default function SchoolDrillPage() {
       const res = await apiRequest<SchoolStudentListResponse>(
         `/admin/schools/${encodeURIComponent(schoolId)}/students?${q.toString()}`
       );
-      setStudents(res);
+      const signedPhotoLinks = await getSignedPhotoLinkMap(res.rows.map((row) => row.photoKey));
+      setStudents({
+        ...res,
+        rows: res.rows.map((row) => {
+          const photoKey = typeof row.photoKey === "string" ? row.photoKey.trim() : "";
+          return {
+            ...row,
+            photoLink: photoKey ? signedPhotoLinks.get(photoKey) || "" : ""
+          };
+        })
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load students");
       clearFlash();
@@ -809,37 +876,33 @@ export default function SchoolDrillPage() {
         `/admin/schools/${encodeURIComponent(schoolId)}/students/export${query.toString() ? `?${query.toString()}` : ""}`
       );
 
-      const photoKeys = Array.from(
-        new Set(
-          exportData.rows
-            .map((row) => (typeof row.photoKey === "string" ? row.photoKey.trim() : ""))
-            .filter(Boolean)
-        )
-      );
-
-      const signedPhotoLinks = new Map<string, string>();
-      await Promise.allSettled(
-        photoKeys.map(async (photoKey) => {
-          const signed = await apiRequest<{ signedUrl: string }>(
-            `/platform/security/assets/signed-url?photoKey=${encodeURIComponent(photoKey)}&ttlSeconds=86400`
-          );
-          signedPhotoLinks.set(photoKey, signed.signedUrl);
-        })
-      );
+      const signedPhotoLinks = await getSignedPhotoLinkMap(exportData.rows.map((row) => String(row.photoKey ?? "")));
 
       const rows: Array<Record<string, string | number | null>> = exportData.rows.map((row) => {
         const photoKey = typeof row.photoKey === "string" ? row.photoKey.trim() : "";
+        const fullName = typeof row.fullName === "string" ? row.fullName.trim() : "";
         return {
           ...row,
+          photoFileName: photoKey
+            ? buildStudentPhotoFileName(fullName, photoKey)
+            : String(row.photoFileName ?? ""),
           photoLink: photoKey ? signedPhotoLinks.get(photoKey) || "" : ""
         };
       });
 
+      const columns = [...exportData.columns];
+      if (!columns.some((column) => column.key === "photoFileName")) {
+        columns.push({ key: "photoFileName", label: "Photo File Name" });
+      }
+      if (!columns.some((column) => column.key === "photoLink")) {
+        columns.push({ key: "photoLink", label: "Photo Link" });
+      }
+
       exportCsv(
         exportData.fileName,
-        exportData.columns.map((column) => column.label),
+        columns.map((column) => column.label),
         rows.map((row) =>
-          exportData.columns.map((column) => {
+          columns.map((column) => {
             const value = row[column.key];
             return typeof value === "number" ? value : String(value ?? "");
           })
@@ -1169,6 +1232,7 @@ export default function SchoolDrillPage() {
                           <th className="px-3 py-2">Name</th>
                           <th className="px-3 py-2">Class</th>
                           <th className="px-3 py-2">Parent</th>
+                          <th className="px-3 py-2">Photo</th>
                           <th className="px-3 py-2">Status</th>
                           <th className="px-3 py-2">Update</th>
                         </tr>
@@ -1179,6 +1243,23 @@ export default function SchoolDrillPage() {
                             <td className="px-3 py-2">{r.fullName}</td>
                             <td className="px-3 py-2">{[r.className, r.section].filter(Boolean).join("-") || "--"}</td>
                             <td className="px-3 py-2">{[r.parentName, r.parentMobile].filter(Boolean).join(" • ")}</td>
+                            <td className="px-3 py-2">
+                              {r.photoLink ? (
+                                <a
+                                  href={r.photoLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={buildStudentPhotoFileName(r.fullName, r.photoKey)}
+                                  className="inline-flex items-center gap-1 text-sky-300 hover:underline"
+                                >
+                                  <Link2 size={12} /> View
+                                </a>
+                              ) : r.photoKey ? (
+                                <span className="text-[var(--text-muted)]">Preparing...</span>
+                              ) : (
+                                "--"
+                              )}
+                            </td>
                             <td className="px-3 py-2">{r.status}</td>
                             <td className="px-3 py-2">
                               <select
