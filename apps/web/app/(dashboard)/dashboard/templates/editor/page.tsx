@@ -15,7 +15,7 @@ import { CardTemplate } from "@/components/template-editor/types";
 
 function EditorInner() {
   const params = useSearchParams();
-  const templateId = params.get("id");
+  const templateId = params?.get("id") ?? null;
 
   // TODO: fetch real template by templateId from API when id is provided
   const initialTemplate: CardTemplate = defaultTemplate();
