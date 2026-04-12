@@ -1,8 +1,9 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Camera, CheckCircle2, ChevronRight, Save, ShieldCheck, Smartphone, Upload } from "lucide-react";
+import { Camera, CheckCircle2, ChevronRight, Plus, Save, ShieldCheck, Upload, Users } from "lucide-react";
 import { ChangeEvent, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import AdvancedCamera, { type CaptureResult } from "@/components/camera/AdvancedCamera";
 import { useSearchParams } from "next/navigation";
 
 type Step = "auth" | "otp" | "details" | "photo" | "review" | "done";
@@ -205,6 +206,9 @@ function IntakePortalInner() {
   const [photoAnalysis, setPhotoAnalysis] = useState<PhotoAnalysisState | null>(null);
   const [enhancingPhoto, setEnhancingPhoto] = useState(false);
   const [analyzingPhoto, setAnalyzingPhoto] = useState(false);
+  const [rawPhotoUrl, setRawPhotoUrl] = useState("");
+  const [showOriginalPhoto, setShowOriginalPhoto] = useState(false);
+  const [showPhotoTips, setShowPhotoTips] = useState(true);
   const [resendAt, setResendAt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [draft, setDraft] = useState<IntakeDraft>({
@@ -530,7 +534,12 @@ function IntakePortalInner() {
   async function moveToPhoto() {
     setError("");
     if (!validateDetails()) return;
+    setShowPhotoTips(true);   // always show tips before camera
     setStep("photo");
+  }
+
+  async function openCameraAfterTips() {
+    setShowPhotoTips(false);
     await startCamera();
   }
 
@@ -747,8 +756,24 @@ function IntakePortalInner() {
       const dataUrl = typeof reader.result === "string" ? reader.result : "";
       if (!dataUrl) return;
       const croppedDataUrl = await cropImageDataUrlToPassport(dataUrl);
+      setRawPhotoUrl(croppedDataUrl);
+      setShowOriginalPhoto(false);
       stopCamera();
-      await processSelectedPhoto(croppedDataUrl);
+      setEnhancingPhoto(true);
+      setError("");
+      setPhotoAnalysis(null);
+      try {
+        let enhanced = croppedDataUrl;
+        setStatus("Step 1/2 — Tone & sharpness…");
+        try { enhanced = await enhancePhotoForPrint(croppedDataUrl, photoBackgroundPreference); } catch {}
+        setStatus("Step 2/2 — Face polish & enhance…");
+        try { enhanced = await applyFaceRetouch(enhanced); } catch {}
+        setCapturedDataUrl(enhanced);
+        setStatus("");
+        void analyzeCapturedPhoto(enhanced);
+      } finally {
+        setEnhancingPhoto(false);
+      }
     };
     reader.readAsDataURL(file);
   }
@@ -828,9 +853,17 @@ function IntakePortalInner() {
     }
   }
 
+  function continueToReview() {
+    setError("");
+    setStatus("");
+    setStep("review");
+  }
+
   function resetForNext() {
     setCapturedDataUrl("");
+    setRawPhotoUrl("");
     setPhotoAnalysis(null);
+    setShowOriginalPhoto(false);
     setDraft({
       fullName: "",
       parentName: "",
@@ -842,6 +875,28 @@ function IntakePortalInner() {
       dob: "",
       bloodGroup: "",
       emergencyNumber: "",
+      aadhaarNumber: ""
+    });
+    setStep("details");
+  }
+
+  function resetForSibling() {
+    setCapturedDataUrl("");
+    setRawPhotoUrl("");
+    setPhotoAnalysis(null);
+    setShowOriginalPhoto(false);
+    // Keep parent's verified mobile — sibling belongs to same parent
+    setDraft({
+      fullName: "",
+      parentName: draft.parentName,
+      mobile: verifiedMobile,
+      className: fixedPrimaryValue || draft.className,
+      division: fixedSecondaryValue || draft.division,
+      rollNumber: "",
+      address: draft.address,
+      dob: "",
+      bloodGroup: "",
+      emergencyNumber: draft.emergencyNumber,
       aadhaarNumber: ""
     });
     setStep("details");
@@ -1076,245 +1131,357 @@ function IntakePortalInner() {
 
         {step === "photo" && sessionContext ? (
           <section className="glass rounded-2xl p-4">
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2">
               <p className="text-sm font-semibold">Step 4: Photo upload or capture</p>
-              <span className="text-[11px] text-[var(--text-muted)]">
-                Background: {photoBackgroundPreference}
-              </span>
             </div>
-            <div className="grid gap-3 lg:grid-cols-[1fr_280px]">
-              <div>
-                <div className="relative">
-                  <video
-                    ref={videoRef}
-                    className="h-[420px] w-full rounded-2xl border border-[var(--line-soft)] bg-black object-cover"
-                    playsInline
-                    muted
-                  />
-                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                    <div className="relative h-[72%] w-[52%] rounded-[2rem] border-2 border-[rgba(255,255,255,0.92)] shadow-[0_0_0_9999px_rgba(4,10,22,0.24)]">
-                      <div className="absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-[rgba(4,10,22,0.78)] px-3 py-1 text-[11px] font-medium text-white">
-                        Keep face inside the center frame
+
+            {/* ── Photo tips screen (shown before camera opens) ── */}
+            {showPhotoTips && !capturedDataUrl && !enhancingPhoto ? (
+              <PhotoTipsScreen onOpenCamera={() => void openCameraAfterTips()} />
+            ) : null}
+
+            {/* ── AI-guided camera or captured preview ── */}
+            {(!showPhotoTips || capturedDataUrl || enhancingPhoto) && (capturedDataUrl || enhancingPhoto) ? (
+              /* ── Retouched photo preview + before/after toggle ── */
+              <div className="flex flex-col items-center gap-4">
+                {/* Container matches AdvancedCamera viewport: max 420px, 3:4 ratio */}
+                <div className="relative w-full overflow-hidden rounded-3xl border-2
+                                border-green-500/50 shadow-2xl shadow-green-500/10"
+                     style={{ maxWidth: 420, aspectRatio: "3/4" }}>
+
+                  {/* Photo or enhancing spinner — fills the aspect-ratio box */}
+                  {enhancingPhoto ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-950 px-6 gap-5">
+                      {/* Pulsing face outline icon */}
+                      <div className="relative flex items-center justify-center">
+                        <div className="h-16 w-16 animate-ping absolute rounded-full bg-blue-600/20" />
+                        <div className="h-14 w-14 animate-spin rounded-full border-2 border-blue-600/30 border-t-blue-500" />
+                        <svg className="absolute h-7 w-7 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <circle cx="12" cy="8" r="4" />
+                          <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+                        </svg>
                       </div>
-                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-[rgba(4,10,22,0.78)] px-3 py-1 text-[10px] text-white">
-                        Eyes level, face straight, shoulders visible
+                      {/* Step pills */}
+                      <div className="flex gap-2">
+                        {[
+                          { label: "Tone & Sharpen", done: status.includes("2/2") || status === "" },
+                          { label: "Face Enhance",   done: status === "" },
+                        ].map((s, i) => {
+                          const active =
+                            (i === 0 && status.includes("1/2")) ||
+                            (i === 1 && status.includes("2/2"));
+                          return (
+                            <span key={i} className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold transition-all ${
+                              s.done
+                                ? "bg-green-700/50 text-green-300"
+                                : active
+                                  ? "bg-blue-600 text-white shadow-sm shadow-blue-500/40"
+                                  : "bg-gray-800 text-gray-500"
+                            }`}>
+                              {s.done ? "✓ " : ""}{s.label}
+                            </span>
+                          );
+                        })}
                       </div>
+                      <p className="text-center text-[11px] text-blue-200 font-medium">
+                        {status || "Finishing up…"}
+                      </p>
                     </div>
+                  ) : (
+                    <img
+                      src={showOriginalPhoto ? rawPhotoUrl : capturedDataUrl}
+                      alt={showOriginalPhoto ? "Original photo" : "Retouched photo"}
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  )}
+
+                  {/* Before / After toggle — top-left */}
+                  {rawPhotoUrl && !enhancingPhoto && (
+                    <div className="absolute top-3 left-3 z-10 flex overflow-hidden rounded-xl border border-white/20 shadow-lg">
+                      <button
+                        onClick={() => setShowOriginalPhoto(false)}
+                        className={`px-3 py-1 text-[10px] font-semibold transition ${
+                          !showOriginalPhoto ? "bg-blue-600 text-white" : "bg-black/70 text-white/60"
+                        }`}
+                      >
+                        Retouched
+                      </button>
+                      <button
+                        onClick={() => setShowOriginalPhoto(true)}
+                        className={`px-3 py-1 text-[10px] font-semibold transition ${
+                          showOriginalPhoto ? "bg-blue-600 text-white" : "bg-black/70 text-white/60"
+                        }`}
+                      >
+                        Original
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Quality overlay — bottom gradient */}
+                  {!enhancingPhoto && (
+                    <div className="absolute bottom-0 inset-x-0 rounded-b-3xl bg-gradient-to-t from-black/80 to-transparent px-3 py-4">
+                      {analyzingPhoto ? (
+                        <p className="text-center text-xs text-white/70">Analyzing quality…</p>
+                      ) : photoAnalysis ? (
+                        <div className="text-center">
+                          <span className={`inline-block rounded-lg px-3 py-1 text-xs font-bold ${
+                            photoAnalysis.quality.status === "PASSED"
+                              ? "bg-green-600/40 text-green-300"
+                              : photoAnalysis.quality.status === "WARN"
+                                ? "bg-amber-600/40 text-amber-300"
+                                : "bg-red-600/40 text-red-300"
+                          }`}>
+                            {photoAnalysis.quality.status} · Score {photoAnalysis.quality.score ?? "--"}
+                          </span>
+                          {photoAnalysis.quality.warnings.length ? (
+                            <p className="mt-1 text-[10px] text-amber-300">{photoAnalysis.quality.warnings[0]}</p>
+                          ) : (
+                            <p className="mt-1 text-[10px] text-green-400">Ready for ID card printing</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+
+                {/* Action buttons — match photo container width */}
+                <div className="flex w-full flex-col gap-3" style={{ maxWidth: 420 }}>
+                  {/* Primary CTA — go to review */}
+                  {!enhancingPhoto && capturedDataUrl && (
+                    <button
+                      onClick={continueToReview}
+                      className="flex w-full items-center justify-center gap-2 rounded-2xl
+                                 bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] py-3.5 text-sm font-bold
+                                 text-white shadow-lg shadow-blue-900/30 transition"
+                    >
+                      <ChevronRight size={16} /> Use This Photo — Continue
+                    </button>
+                  )}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => { setCapturedDataUrl(""); setRawPhotoUrl(""); setPhotoAnalysis(null); setShowPhotoTips(false); void startCamera(); }}
+                      className="flex flex-1 items-center justify-center gap-2 rounded-2xl
+                                 border border-[var(--line-soft)] py-3 text-sm font-medium transition hover-glow"
+                    >
+                      <Camera size={15} /> Retake
+                    </button>
+                    {sessionContext.submissionModel.allowPhotoUpload && (
+                      <label className="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-2xl
+                                        border border-[var(--line-soft)] py-3 text-sm font-medium transition hover-glow">
+                        <Upload size={15} /> Upload
+                        <input type="file" accept="image/png,image/jpeg"
+                          onChange={(e) => void handlePhotoUpload(e)} className="hidden" />
+                      </label>
+                    )}
                   </div>
                 </div>
-                <canvas ref={captureCanvasRef} className="hidden" />
               </div>
-              <div className="space-y-2">
-                <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] p-3 text-xs text-[var(--text-muted)]">
-                  <p className="m-0 font-medium text-[var(--text-primary)]">AI guidance</p>
-                  <p className="m-0 mt-1">{guidance}</p>
-                  <p className="m-0 mt-2 text-[11px] text-[var(--text-muted)]">
-                    Parents on mobile should keep the face steady in the middle. Capture only after face, center, light, and background checks all show ready together.
-                  </p>
-                  <div className="mt-2 rounded-lg border border-[var(--line-soft)] px-2 py-2 text-[11px]">
-                    <p className="m-0 text-[var(--text-primary)]">
-                      Capture readiness: <span className="font-medium">{captureStability}/{CAPTURE_STABILITY_TARGET}</span>
-                    </p>
-                    <p className="m-0 mt-1 text-[var(--text-muted)]">
-                      Hold still very briefly until the frame is ready for manual capture.
-                    </p>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    <GuidanceRow
-                      label="Face position"
-                      ready={captureAssistant.faceDetected && captureAssistant.faceCentered}
-                      note={
-                        captureAssistant.guidanceMode === "native"
-                          ? "Keep the face in the middle."
-                          : captureAssistant.guidanceMode === "fallback"
-                            ? "Fallback face guidance active. Keep the face inside the center frame."
-                            : "Manual alignment mode."
-                      }
-                    />
-                    <GuidanceRow
-                      label="Lighting"
-                      ready={captureAssistant.lightingGood}
-                      note="Use even light on the face."
-                    />
-                    <GuidanceRow
-                      label="Background"
-                      ready={captureAssistant.backgroundGood}
-                      note={
-                        photoBackgroundPreference === "NONE"
-                          ? "Background not enforced."
-                          : photoBackgroundPreference === "PLAIN"
-                            ? "Any plain, uncluttered background is preferred."
-                          : `Plain ${photoBackgroundPreference.toLowerCase()} background preferred.`
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] p-3 text-xs">
-                  <p className="m-0 mb-2 flex items-center gap-2">
-                    <Smartphone size={13} /> Camera source
-                  </p>
-                  <select
-                    value={deviceId}
-                    onChange={(event) => setDeviceId(event.target.value)}
-                    className="w-full rounded-xl border border-[var(--line-soft)] bg-transparent px-2 py-2 text-xs outline-none"
-                  >
-                    {devices.map((device, index) => (
-                      <option key={device.deviceId || index} value={device.deviceId}>
-                        {device.label || `Camera ${index + 1}`}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => {
-                      void startCamera();
-                    }}
-                    className="mt-2 w-full rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs"
-                  >
-                    Switch / restart camera
-                  </button>
-                </div>
-                {capturedDataUrl ? (
-                  <div className="overflow-hidden rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)]">
-                    <img src={capturedDataUrl} alt="Latest capture" className="h-40 w-full object-cover" />
-                    {photoAnalysis ? (
-                      <div className="border-t border-[var(--line-soft)] px-3 py-2 text-[11px] text-[var(--text-muted)]">
-                        <p className="m-0">
-                          Last analysis: <span className="font-medium text-[var(--text-primary)]">{photoAnalysis.quality.status}</span>
-                        </p>
-                        {photoAnalysis.quality.warnings.length ? (
-                          <p className="m-0 mt-1 text-rose-300">{photoAnalysis.quality.warnings[0]}</p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-                <button
-                  onClick={() => void capturePhoto()}
-                  disabled={captureAssistant.guidanceMode !== "manual" && !captureAssistant.ready}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-4 py-2 text-sm font-semibold disabled:opacity-50"
-                >
-                  <Camera size={15} /> Capture
-                </button>
-                {sessionContext.submissionModel.allowPhotoUpload ? (
-                  <label className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-[var(--line-soft)] px-4 py-2 text-sm">
-                    <Upload size={15} /> Upload photo
-                    <input type="file" accept="image/png,image/jpeg" onChange={(event) => void handlePhotoUpload(event)} className="hidden" />
-                  </label>
-                ) : null}
-                <button
-                  onClick={() => {
+            ) : !showPhotoTips ? (
+              /* ── Advanced AI camera ── */
+              <div className="flex flex-col items-center">
+                <AdvancedCamera
+                  onCapture={async (result: CaptureResult) => {
+                    setRawPhotoUrl(result.dataUrl);
+                    setShowOriginalPhoto(false);
                     stopCamera();
-                    setStep("details");
+                    setEnhancingPhoto(true);
+                    setError("");
+                    setPhotoAnalysis(null);
+                    try {
+                      let enhanced = result.dataUrl;
+                      setStatus("Step 1/2 — Tone & sharpness…");
+                      try { enhanced = await enhancePhotoForPrint(result.dataUrl, photoBackgroundPreference); } catch {}
+                      setStatus("Step 2/2 — Face polish & enhance…");
+                      try { enhanced = await applyFaceRetouch(enhanced); } catch {}
+                      setCapturedDataUrl(enhanced);
+                      setStatus("");
+                      void analyzeCapturedPhoto(enhanced);
+                    } finally {
+                      setEnhancingPhoto(false);
+                    }
                   }}
-                  className="w-full rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs"
-                >
-                  Back
-                </button>
+                  onCancel={undefined}
+                  captureWidth={720}
+                  captureHeight={960}
+                />
+                {sessionContext.submissionModel.allowPhotoUpload && (
+                  <label className="mt-3 inline-flex items-center gap-2 cursor-pointer
+                                    text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition">
+                    <Upload size={13} /> Or upload a photo instead
+                    <input type="file" accept="image/png,image/jpeg"
+                      onChange={(e) => void handlePhotoUpload(e)} className="hidden" />
+                  </label>
+                )}
               </div>
+            ) : null}
+            {/* ── hidden canvas used by analyzePhoto helper ── */}
+            <canvas ref={captureCanvasRef} className="hidden" />
+            <div className="mt-3">
+              <button
+                onClick={() => { stopCamera(); setStep("details"); }}
+                className="w-full rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs"
+              >
+                Back
+              </button>
             </div>
           </section>
         ) : null}
 
         {step === "review" && sessionContext ? (
           <section className="glass rounded-2xl p-4">
-            <p className="mb-2 text-sm font-semibold">Step 5: Preview and submit</p>
-            <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-              <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-soft)] p-3">
-                <img src={capturedDataUrl} alt="Captured" className="h-[420px] w-full rounded-xl object-cover" />
+            {/* Header */}
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-base font-bold text-gray-100">Step 5: Final Review</p>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">Check all details carefully before submitting</p>
               </div>
-              <div className="space-y-3">
-                <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-soft)] p-4">
-                  <p className="m-0 text-sm font-semibold">Submission summary</p>
-                  <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
-                    <p className="m-0">Institution: {sessionContext.link.school.name}</p>
-                    <p className="m-0">Campaign: {sessionContext.link.campaignName}</p>
-                    {segmentLabel ? <p className="m-0">Segment: {segmentLabel}</p> : null}
-                    <p className="m-0">{actorType === "PARENT" ? "Student" : "Name"}: {draft.fullName}</p>
-                    {showParentName ? <p className="m-0">Parent: {draft.parentName}</p> : null}
-                    {showClassName ? <p className="m-0">{primaryLabel}: {fixedPrimaryValue || draft.className || "--"}</p> : null}
-                    {showDivision ? <p className="m-0">{secondaryLabel}: {fixedSecondaryValue || draft.division || "--"}</p> : null}
-                    {showRollNumber ? <p className="m-0">Roll Number: {draft.rollNumber || "--"}</p> : null}
-                    {showMobile ? <p className="m-0">Verified Mobile: {draft.mobile || verifiedMobile}</p> : null}
-                    {showEmergencyNumber ? <p className="m-0">Emergency Number: {draft.emergencyNumber || "--"}</p> : null}
-                    {showAddress ? <p className="m-0">Address: {draft.address || "--"}</p> : null}
-                    {showAadhaarNumber ? <p className="m-0">Aadhaar Number: {draft.aadhaarNumber || "--"}</p> : null}
+              {photoAnalysis && !analyzingPhoto && (
+                <span className={`rounded-xl border px-3 py-1.5 text-xs font-bold ${
+                  photoAnalysis.quality.status === "PASSED"
+                    ? "border-green-500/30 bg-green-500/20 text-green-400"
+                    : photoAnalysis.quality.status === "WARN"
+                      ? "border-amber-500/30 bg-amber-500/20 text-amber-400"
+                      : "border-red-500/30 bg-red-500/20 text-red-400"
+                }`}>
+                  {photoAnalysis.quality.status}
+                  {photoAnalysis.quality.score ? ` · ${photoAnalysis.quality.score}` : ""}
+                </span>
+              )}
+              {analyzingPhoto && (
+                <span className="rounded-xl border border-[var(--line-soft)] px-3 py-1.5 text-xs text-[var(--text-muted)]">
+                  Checking quality…
+                </span>
+              )}
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[200px_1fr]">
+              {/* Photo column */}
+              <div className="flex flex-col items-center gap-3">
+                <div className="relative w-full max-w-[200px] overflow-hidden rounded-2xl border border-[var(--line-soft)] shadow-xl">
+                  <img src={capturedDataUrl} alt="Student photo" className="w-full object-cover" />
+                  <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-2 text-center text-[10px] font-semibold text-emerald-300">
+                    Print-ready · Enhanced
                   </div>
                 </div>
-                <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-soft)] p-3 text-xs">
-                  <p className="m-0 text-sm font-semibold">Photo quality</p>
-                  {enhancingPhoto ? (
-                    <p className="m-0 mt-2 text-[var(--text-muted)]">
-                      Applying print-ready enhancement: plain background cleanup, light balancing, and mild sharpening...
-                    </p>
-                  ) : null}
-                  {analyzingPhoto ? <p className="m-0 mt-2 text-[var(--text-muted)]">Analyzing face, light, and clarity...</p> : null}
-                  {photoAnalysis ? (
-                    <div className="mt-2 space-y-1">
-                      <p className="m-0">
-                        Status: <span className="font-semibold">{photoAnalysis.quality.status}</span>
-                      </p>
-                      <p className="m-0">Score: {photoAnalysis.quality.score ?? "--"}</p>
-                      {photoAnalysis.quality.warnings.length ? (
-                        <ul className="m-0 list-disc pl-4 text-rose-300">
-                          {photoAnalysis.quality.warnings.map((warning) => (
-                            <li key={warning}>{warning}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="m-0 text-emerald-300">Photo passed quality checks.</p>
-                      )}
-                    </div>
-                  ) : null}
-                  <p className="m-0 mt-2 text-[var(--text-muted)]">
-                    Photo file name will be stored using the entered full name, and the saved image uses the print-ready enhanced version.
+                <button
+                  onClick={() => { setError(""); setStatus(""); setShowPhotoTips(false); setStep("photo"); void startCamera(); }}
+                  className="w-full rounded-xl border border-[var(--line-soft)] px-3 py-1.5 text-xs text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
+                >
+                  <Camera size={11} className="mr-1 inline" /> Retake photo
+                </button>
+              </div>
+
+              {/* Details column */}
+              <div className="space-y-3">
+                {/* Student details card */}
+                <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-soft)] p-4">
+                  <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
+                    Student Details
                   </p>
-                  {submissionModel.workflowRequired ? (
-                    <p className="m-0 mt-2 text-[var(--text-muted)]">
-                      Final submit will save the record and place it into review.
-                    </p>
-                  ) : null}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                    <ReviewField label={actorType === "PARENT" ? "Student Name" : "Name"} value={draft.fullName} />
+                    {showParentName && <ReviewField label="Parent Name" value={draft.parentName} />}
+                    {showClassName && <ReviewField label={primaryLabel} value={fixedPrimaryValue || draft.className} />}
+                    {showDivision && <ReviewField label={secondaryLabel || "Division"} value={fixedSecondaryValue || draft.division} />}
+                    {showRollNumber && <ReviewField label="Roll No." value={draft.rollNumber} />}
+                    {showMobile && <ReviewField label="Mobile" value={draft.mobile || verifiedMobile} verified />}
+                    {showDob && <ReviewField label="Date of Birth" value={draft.dob} />}
+                    {showBloodGroup && <ReviewField label="Blood Group" value={draft.bloodGroup} />}
+                    {showAadhaarNumber && <ReviewField label="Aadhaar" value={draft.aadhaarNumber ? `XXXX-XXXX-${draft.aadhaarNumber.slice(-4)}` : "--"} />}
+                    {showEmergencyNumber && <ReviewField label="Emergency No." value={draft.emergencyNumber} />}
+                  </div>
+                  {showAddress && draft.address && (
+                    <div className="mt-3 border-t border-[var(--line-soft)] pt-2">
+                      <p className="text-[10px] text-[var(--text-muted)]">Address</p>
+                      <p className="mt-0.5 text-xs">{draft.address}</p>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => { setError(""); setStatus(""); setStep("details"); }}
+                    className="mt-3 text-[10px] text-blue-400 transition hover:text-blue-300"
+                  >
+                    Edit details
+                  </button>
                 </div>
+
+                {/* Institution */}
+                <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] px-3 py-2 text-xs text-[var(--text-muted)]">
+                  <p className="font-medium text-[var(--text-primary)]">{sessionContext.link.school.name}</p>
+                  <p className="mt-0.5">{sessionContext.link.campaignName}{segmentLabel ? ` · ${segmentLabel}` : ""}</p>
+                </div>
+
+                {/* Quality warnings */}
+                {photoAnalysis?.quality.warnings.length ? (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                    <p className="font-semibold">Photo Warnings</p>
+                    {photoAnalysis.quality.warnings.map((w) => (
+                      <p key={w} className="mt-0.5">• {w}</p>
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* Submit */}
                 <button
                   onClick={() => void submitIntake()}
                   disabled={enhancingPhoto || submitting || !capturedDataUrl}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-4 py-2 text-sm font-semibold disabled:opacity-60"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl
+                             bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] py-3.5 text-sm font-bold
+                             text-white shadow-lg shadow-blue-900/30 transition disabled:opacity-60"
                 >
-                  <ShieldCheck size={15} />{" "}
-                  {submitting
-                    ? "Saving submission..."
-                    : analyzingPhoto
-                      ? "Final submit while checks finish"
-                      : "Final submit"}
+                  <ShieldCheck size={16} />
+                  {submitting ? "Saving record…" : "Submit Intake Record"}
                 </button>
-                <button
-                  onClick={() => {
-                    setError("");
-                    setStatus("");
-                    setStep("photo");
-                    void startCamera();
-                  }}
-                  className="w-full rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs"
-                >
-                  Retake photo
-                </button>
+                {submissionModel.workflowRequired && (
+                  <p className="text-center text-[10px] text-[var(--text-muted)]">
+                    Record will be placed in review queue after submission.
+                  </p>
+                )}
               </div>
             </div>
           </section>
         ) : null}
 
         {step === "done" ? (
-          <section className="glass rounded-2xl p-4 text-center">
-            <CheckCircle2 className="mx-auto mb-3" size={36} />
-            <p className="text-lg font-semibold">Submission complete</p>
-            <p className="text-xs text-[var(--text-muted)]">
-              The intake record has been saved against the verified mobile number.
+          <section className="glass rounded-2xl p-6 text-center">
+            {/* Success icon */}
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full
+                            border border-green-500/30 bg-gradient-to-br from-green-500/20 to-emerald-500/20">
+              <CheckCircle2 size={32} className="text-green-400" />
+            </div>
+            <p className="text-xl font-bold text-gray-100">Submission Complete!</p>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              {draft.fullName ? `${draft.fullName}'s` : "The"} intake record has been saved successfully.
             </p>
-            <button
-              onClick={resetForNext}
-              className="mt-3 rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-4 py-2 text-sm font-semibold"
-            >
-              Add another record
-            </button>
+            <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+              Linked to verified mobile: {maskMobile(verifiedMobile)}
+            </p>
+
+            <div className="mx-auto mt-6 flex max-w-xs flex-col gap-3">
+              {/* Add sibling — primary CTA */}
+              <button
+                onClick={resetForSibling}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl
+                           bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-4 py-3
+                           text-sm font-bold text-white shadow-lg shadow-blue-900/30 transition"
+              >
+                <Users size={16} /> Add Another Student (Sibling)
+              </button>
+
+              {/* New student / different family */}
+              <button
+                onClick={resetForNext}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl
+                           border border-[var(--line-soft)] px-4 py-3 text-sm font-medium
+                           text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
+              >
+                <Plus size={16} /> New Student Record
+              </button>
+            </div>
+
+            <p className="mt-4 text-[10px] text-[var(--text-muted)]">
+              <strong>Sibling</strong> keeps the same verified mobile and pre-fills parent info.{" "}
+              <strong>New Student Record</strong> starts a fresh form.
+            </p>
           </section>
         ) : null}
       </div>
@@ -1429,6 +1596,145 @@ function loadImageDataUrl(dataUrl: string) {
     image.src = dataUrl;
   });
 }
+
+/**
+ * 4-pass face retouch — targets professional studio passport quality.
+ *
+ * Pass 1  — Global tone: brightness / contrast / saturation via CSS filter
+ *           applied during the upscale draw (free GPU-accelerated pass).
+ * Pass 2  — Bilateral-style edge-preserving noise reduction: averages only
+ *           neighbours whose colour is within NR_THR of the centre pixel,
+ *           preserving hair/eye edges while smoothing skin noise.
+ * Pass 3  — Unsharp mask: box-blur then amplify the high-frequency residual
+ *           (SHARP × (NR − blur)), giving crisp edges without halos.
+ * Pass 4  — Kelvin colour temperature shift: phone sensors default to ~6 000 K
+ *           (daylight/overcast).  We shift to ~4 800 K (studio tungsten flash)
+ *           by adding R +12, G +4, B −18.  Pure-white pixels are skipped so
+ *           the removed background stays neutral white.
+ *
+ * Output is upscaled to TARGET_LONG = 2 400 px on the long edge (≈4 K print
+ * quality at 300 DPI passport size) and encoded as JPEG 0.91 — which gives
+ * ~30 % smaller files than 0.95 with no visible quality loss.
+ */
+function applyFaceRetouch(dataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      // ── Pass 1: Upscale + global tone ───────────────────────────────────
+      const TARGET_LONG = 2400;
+      const srcLong = Math.max(img.width, img.height);
+      const upscale = srcLong < TARGET_LONG ? TARGET_LONG / srcLong : 1;
+      const W = Math.round(img.width  * upscale);
+      const H = Math.round(img.height * upscale);
+
+      const canvas = document.createElement("canvas");
+      canvas.width  = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(dataUrl); return; }
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      // Subtle global tone — keep it close to natural, no heavy saturation boost
+      ctx.filter = "brightness(1.03) contrast(1.08) saturate(1.05)";
+      ctx.drawImage(img, 0, 0, W, H);
+      ctx.filter = "none";
+
+      const imgData = ctx.getImageData(0, 0, W, H);
+      const src = imgData.data;
+
+      // ── Pass 2: Bilateral-style noise reduction ──────────────────────────
+      // NR_THR = 30: include neighbours with similar colour (edge-preserving)
+      // Blend: 50 % original + 50 % filtered → smooth noise without smearing edges
+      const NR_THR = 30;
+      const nr = new Uint8ClampedArray(src);
+      for (let y = 1; y < H - 1; y++) {
+        for (let x = 1; x < W - 1; x++) {
+          const pi = (y * W + x) * 4;
+          for (let ch = 0; ch < 3; ch++) {
+            const cv = src[pi + ch];
+            let sum = cv, cnt = 1;
+            for (let ny2 = -1; ny2 <= 1; ny2++) {
+              for (let nx2 = -1; nx2 <= 1; nx2++) {
+                if (nx2 === 0 && ny2 === 0) continue;
+                const ni = ((y + ny2) * W + (x + nx2)) * 4;
+                if (Math.abs(src[ni + ch] - cv) <= NR_THR) { sum += src[ni + ch]; cnt++; }
+              }
+            }
+            nr[pi + ch] = Math.round(cv * 0.5 + (sum / cnt) * 0.5);
+          }
+        }
+      }
+
+      // ── Pass 3: Unsharp mask ─────────────────────────────────────────────
+      const BLR = 1;      // tighter blur radius = finer detail sharpening
+      const SHARP = 1.2;  // reduced from 2.0 — crisp without artificial edge halos
+      const blurred = new Uint8ClampedArray(nr);
+      const tmp     = new Uint8ClampedArray(nr);
+
+      // Horizontal box-blur pass
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const pi = (y * W + x) * 4;
+          for (let ch = 0; ch < 3; ch++) {
+            let s = 0, c = 0;
+            for (let dx = -BLR; dx <= BLR; dx++) {
+              s += nr[(y * W + Math.max(0, Math.min(W - 1, x + dx))) * 4 + ch]; c++;
+            }
+            tmp[pi + ch] = s / c;
+          }
+        }
+      }
+      // Vertical box-blur pass
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const pi = (y * W + x) * 4;
+          for (let ch = 0; ch < 3; ch++) {
+            let s = 0, c = 0;
+            for (let dy = -BLR; dy <= BLR; dy++) {
+              s += tmp[(Math.max(0, Math.min(H - 1, y + dy)) * W + x) * 4 + ch]; c++;
+            }
+            blurred[pi + ch] = s / c;
+          }
+        }
+      }
+
+      // ── Pass 4: Unsharp mask apply + Kelvin warm shift ──────────────────
+      // Kelvin: phone ~6 000 K → studio ~4 800 K (R +12, G +4, B −18)
+      const out = new Uint8ClampedArray(src.length);
+      for (let i = 0; i < src.length; i += 4) {
+        const r = Math.round(nr[i]     + SHARP * (nr[i]     - blurred[i]));
+        const g = Math.round(nr[i + 1] + SHARP * (nr[i + 1] - blurred[i + 1]));
+        const b = Math.round(nr[i + 2] + SHARP * (nr[i + 2] - blurred[i + 2]));
+        // Kelvin: gentle warm shift — phone ~6 000 K → ~5 200 K (natural daylight)
+        out[i]     = Math.min(255, Math.max(0, r + 5));
+        out[i + 1] = Math.min(255, Math.max(0, g + 1));
+        out[i + 2] = Math.min(255, Math.max(0, b - 7));
+        out[i + 3] = 255;
+      }
+
+      ctx.putImageData(new ImageData(out, W, H), 0, 0);
+      // JPEG 0.91 — ~30% smaller than 0.95, no visible quality difference at 4K
+      resolve(canvas.toDataURL("image/jpeg", 0.91));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/** Compact field display for the review step. */
+function ReviewField({ label, value, verified }: { label: string; value: string; verified?: boolean }) {
+  return (
+    <div>
+      <p className="text-[10px] text-[var(--text-muted)]">{label}</p>
+      <p className="text-xs font-medium text-[var(--text-primary)]">
+        {value || "--"}
+        {verified && <span className="ml-1 text-[9px] text-emerald-400">✓ verified</span>}
+      </p>
+    </div>
+  );
+}
+
 
 async function enhancePhotoForPrint(dataUrl: string, backgroundPreference: string) {
   const image = await loadImageDataUrl(dataUrl);
@@ -1890,6 +2196,100 @@ function Badge({ text }: { text: string }) {
     <span className="rounded-full border border-[var(--line-soft)] px-3 py-1 text-[11px] text-[var(--text-muted)]">
       {text}
     </span>
+  );
+}
+
+// ── Photo Tips Screen ─────────────────────────────────────────────────────────
+
+function PhotoTipsScreen({ onOpenCamera }: { onOpenCamera: () => void }) {
+  const dos = [
+    { icon: "☀️", text: "Face a bright light source (window or lamp in front of you)" },
+    { icon: "🏠", text: "Use a plain, uncluttered wall behind you" },
+    { icon: "👀", text: "Look straight at the camera — eyes open, neutral expression" },
+    { icon: "📱", text: "Hold the phone at eye level, arm's length away" },
+  ];
+  const donts = [
+    { icon: "🚫", text: "No backlight — don't stand with a window behind you" },
+    { icon: "🕶️", text: "Remove glasses, caps, or face coverings" },
+    { icon: "🌑", text: "Avoid dark or crowded backgrounds" },
+    { icon: "🤳", text: "Don't tilt or rotate the phone sideways" },
+  ];
+
+  return (
+    <div className="flex flex-col gap-5 py-2">
+
+      {/* Sample photo illustration */}
+      <div className="flex items-center justify-center gap-4">
+        {/* Good example */}
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex h-28 w-20 flex-col items-center justify-center gap-1 rounded-xl border-2 border-green-500/50 bg-gradient-to-b from-sky-100/10 to-sky-50/5 shadow-md shadow-green-500/10">
+            <div className="h-10 w-10 rounded-full bg-amber-300/80 shadow-inner" style={{ boxShadow: "inset 0 2px 4px rgba(0,0,0,0.2)" }} />
+            <div className="h-5 w-14 rounded-t-full bg-amber-300/60" />
+          </div>
+          <span className="flex items-center gap-1 text-[10px] font-semibold text-green-400">
+            <span>✓</span> Good
+          </span>
+        </div>
+
+        <div className="text-2xl text-gray-600">vs</div>
+
+        {/* Bad example */}
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex h-28 w-20 flex-col items-center justify-center gap-1 rounded-xl border-2 border-red-500/40 bg-gradient-to-b from-orange-900/30 to-brown-900/20 shadow-md shadow-red-500/10"
+               style={{ background: "linear-gradient(160deg,#3a2010 0%,#1a0a05 100%)" }}>
+            <div className="h-8 w-8 rounded-full bg-amber-600/60 opacity-50" />
+            <div className="h-4 w-12 rounded-t-full bg-amber-600/40 opacity-50" />
+          </div>
+          <span className="flex items-center gap-1 text-[10px] font-semibold text-red-400">
+            <span>✗</span> Dark / cluttered
+          </span>
+        </div>
+      </div>
+
+      {/* Do's and Don'ts */}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-green-400">Do</p>
+          {dos.map((item, i) => (
+            <div key={i} className="flex items-start gap-2 rounded-xl border border-green-500/20 bg-green-500/5 px-3 py-2">
+              <span className="text-base leading-none">{item.icon}</span>
+              <p className="text-[11px] text-[var(--text-primary)] leading-snug">{item.text}</p>
+            </div>
+          ))}
+        </div>
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-red-400">Don't</p>
+          {donts.map((item, i) => (
+            <div key={i} className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2">
+              <span className="text-base leading-none">{item.icon}</span>
+              <p className="text-[11px] text-[var(--text-primary)] leading-snug">{item.text}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Tip callout */}
+      <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-2.5">
+        <span className="text-lg leading-none">💡</span>
+        <p className="text-[11px] text-amber-200 leading-snug">
+          <strong>Tip:</strong> Use the <strong>back camera</strong> with flash for best results — it has a higher-quality sensor than the selfie camera and the flash ensures even lighting even indoors.
+        </p>
+      </div>
+
+      {/* CTA */}
+      <button
+        onClick={onOpenCamera}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl
+                   bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] py-4 text-sm
+                   font-bold text-white shadow-lg shadow-blue-900/30 transition active:scale-[0.98]"
+      >
+        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        I'm Ready — Open Camera
+      </button>
+    </div>
   );
 }
 

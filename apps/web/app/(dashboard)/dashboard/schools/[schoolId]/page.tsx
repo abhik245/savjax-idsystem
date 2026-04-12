@@ -9,7 +9,10 @@ import {
   Link2,
   RefreshCcw,
   Search,
-  ShieldCheck
+  ShieldCheck,
+  X,
+  User,
+  AlertTriangle
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -366,6 +369,7 @@ export default function SchoolDrillPage() {
   const [studentQuery, setStudentQuery] = useState("");
   const [studentStatus, setStudentStatus] = useState<StudentStatus | "">("");
   const [studentsPage, setStudentsPage] = useState(1);
+  const [selectedStudent, setSelectedStudent] = useState<SchoolDetailStudent | null>(null);
 
   const [campaigns, setCampaigns] = useState<IntakeCampaignRow[]>([]);
   const [campaignForm, setCampaignForm] = useState<CampaignForm>(() => buildCampaignForm("SCHOOL"));
@@ -1239,8 +1243,16 @@ export default function SchoolDrillPage() {
                       </thead>
                       <tbody>
                         {students.rows.map((r) => (
-                          <tr key={r.id} className="border-t border-[var(--line-soft)]">
-                            <td className="px-3 py-2">{r.fullName}</td>
+                          <tr key={r.id} className="border-t border-[var(--line-soft)] hover:bg-[var(--surface-strong)]/50 transition-colors">
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedStudent(r)}
+                                className="text-left font-medium text-sky-300 hover:text-sky-200 hover:underline"
+                              >
+                                {r.fullName}
+                              </button>
+                            </td>
                             <td className="px-3 py-2">{[r.className, r.section].filter(Boolean).join("-") || "--"}</td>
                             <td className="px-3 py-2">{[r.parentName, r.parentMobile].filter(Boolean).join(" • ")}</td>
                             <td className="px-3 py-2">
@@ -1837,6 +1849,19 @@ export default function SchoolDrillPage() {
           ) : null}
         </motion.section>
       </div>
+
+      {/* ── Student detail slide-over ── */}
+      {selectedStudent && (
+        <StudentDetailModal
+          student={selectedStudent}
+          workflowStatuses={WORKFLOW_STATUSES}
+          onStatusChange={(status) => {
+            void updateStudent(selectedStudent.id, status);
+            setSelectedStudent((s) => s ? { ...s, status } : s);
+          }}
+          onClose={() => setSelectedStudent(null)}
+        />
+      )}
     </main>
   );
 }
@@ -2182,6 +2207,157 @@ function isoDate(d: Date) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+// ── Student Detail Modal ──────────────────────────────────────────────────────
+
+const STATUS_COLOR: Record<string, string> = {
+  DRAFT:           "border-gray-600/50  bg-gray-600/10  text-gray-400",
+  SUBMITTED:       "border-blue-500/40  bg-blue-500/10  text-blue-300",
+  SCHOOL_APPROVED: "border-cyan-500/40  bg-cyan-500/10  text-cyan-300",
+  SALES_APPROVED:  "border-indigo-500/40 bg-indigo-500/10 text-indigo-300",
+  IN_PRINT_QUEUE:  "border-amber-500/40 bg-amber-500/10 text-amber-300",
+  PRINTED:         "border-lime-500/40  bg-lime-500/10  text-lime-300",
+  DELIVERED:       "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+  REJECTED:        "border-red-500/40   bg-red-500/10   text-red-400",
+};
+
+function StudentDetailModal({
+  student,
+  workflowStatuses,
+  onStatusChange,
+  onClose,
+}: {
+  student: SchoolDetailStudent;
+  workflowStatuses: StudentStatus[];
+  onStatusChange: (s: StudentStatus) => void;
+  onClose: () => void;
+}) {
+  const badgeClass = STATUS_COLOR[student.status] || STATUS_COLOR.DRAFT;
+  const classLabel = [student.className, student.section].filter(Boolean).join(" – ") || "—";
+  const parentLabel = [student.parentName, student.parentMobile].filter(Boolean).join(" • ") || "—";
+
+  return (
+    /* Overlay */
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      {/* Panel */}
+      <div className="relative w-full max-w-2xl rounded-2xl border border-[var(--line-soft)] bg-[var(--surface)] shadow-2xl overflow-hidden">
+
+        {/* Close */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-3 top-3 z-10 rounded-full p-1.5 text-[var(--text-muted)] hover:bg-[var(--surface-strong)] hover:text-white transition"
+        >
+          <X size={16} />
+        </button>
+
+        <div className="flex flex-col sm:flex-row">
+
+          {/* ── Left: Photo ── */}
+          <div className="flex shrink-0 items-center justify-center bg-[var(--surface-strong)] p-6 sm:w-52">
+            {student.photoLink ? (
+              <div className="overflow-hidden rounded-xl shadow-lg" style={{ width: 160, aspectRatio: "3/4" }}>
+                <img
+                  src={student.photoLink}
+                  alt={student.fullName}
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            ) : (
+              <div
+                className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--line-soft)] text-[var(--text-muted)]"
+                style={{ width: 160, aspectRatio: "3/4" }}
+              >
+                <User size={32} className="opacity-30" />
+                <span className="text-[10px]">No photo</span>
+              </div>
+            )}
+          </div>
+
+          {/* ── Right: Details ── */}
+          <div className="flex flex-1 flex-col gap-4 p-5">
+
+            {/* Name + status */}
+            <div>
+              <h2 className="text-base font-bold text-[var(--text-primary)] leading-tight">
+                {student.fullName}
+              </h2>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${badgeClass}`}>
+                  {student.status.replace(/_/g, " ")}
+                </span>
+                {student.duplicateFlag && (
+                  <span className="flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                    <AlertTriangle size={10} /> Duplicate
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Detail grid */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+              <DetailRow label="Class / Section" value={classLabel} />
+              <DetailRow label="Roll Number"     value={student.rollNumber || "—"} />
+              <DetailRow label="Parent / Guardian" value={parentLabel} span />
+              <DetailRow label="Submitted"       value={formatDate(student.createdAt)} />
+              <DetailRow label="Student ID"      value={student.id.slice(0, 12) + "…"} mono />
+            </div>
+
+            {/* Photo link */}
+            {student.photoLink && (
+              <a
+                href={student.photoLink}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-[11px] font-medium text-sky-300 hover:bg-sky-500/20 transition"
+              >
+                <Link2 size={11} /> Open full-size photo
+              </a>
+            )}
+
+            {/* Status update */}
+            <div className="mt-auto">
+              <p className="mb-1 text-[10px] text-[var(--text-muted)]">Update status</p>
+              <select
+                value={student.status}
+                onChange={(e) => onStatusChange(e.target.value as StudentStatus)}
+                className="w-full rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs outline-none focus:border-blue-500"
+              >
+                {workflowStatuses.map((st) => (
+                  <option key={st} value={st}>{st.replace(/_/g, " ")}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({
+  label,
+  value,
+  span = false,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  span?: boolean;
+  mono?: boolean;
+}) {
+  return (
+    <div className={span ? "col-span-2" : ""}>
+      <p className="text-[10px] text-[var(--text-muted)]">{label}</p>
+      <p className={`mt-0.5 font-medium text-[var(--text-primary)] ${mono ? "font-mono text-[10px]" : ""}`}>
+        {value}
+      </p>
+    </div>
+  );
 }
 
 

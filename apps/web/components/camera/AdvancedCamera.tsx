@@ -1,577 +1,573 @@
 "use client";
 
 /**
- * AdvancedCamera — Production-grade photo capture component
+ * AdvancedCamera — AI-guided face capture
  *
- * Features
- * ─────────
- * • Face-guide oval with pulsing ring animation
- * • Real-time brightness, contrast, and motion-blur heuristics
- * • 3-second auto-capture countdown once face is stable in the oval
- * • Manual capture override button
- * • Mirror (selfie) view with correct final-image orientation
- * • Supports front/rear camera toggle
- * • No third-party face-detection libraries — uses Canvas pixel analysis
- * • Full ARIA labels for accessibility
+ * Features:
+ * ─ Beautiful oval face guide with animated pulsing ring
+ * ─ Real-time pixel-level brightness, sharpness & motion analysis
+ * ─ Four animated quality indicators (Face · Light · Sharp · Still)
+ * ─ 3-second auto-capture once all checks pass
+ * ─ Circular countdown ring drawn on canvas
+ * ─ Flash effect on capture
+ * ─ Front/rear camera toggle
+ * ─ Manual override capture button
+ * ─ No external libraries — pure Canvas + MediaDevices API
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, FlipHorizontal2, RefreshCw, X, ZapOff, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Camera, FlipHorizontal2, RefreshCw, X, CheckCircle2, AlertCircle, Zap, ZapOff } from "lucide-react";
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 export type CaptureResult = {
-  dataUrl: string; // base64 JPEG
+  dataUrl: string;
   width: number;
   height: number;
-  qualityScore: number; // 0-100
+  qualityScore: number;
 };
 
-type FaceQuality = {
-  centered: boolean; // face is inside the oval
-  bright: boolean; // sufficient brightness
-  sharp: boolean; // low blur / sufficient edge energy
-  stable: boolean; // not moving too fast
-  score: number; // 0-100 composite
-  guidance: string;
+type Quality = {
+  face: boolean;
+  light: boolean;
+  sharp: boolean;
+  still: boolean;
+  score: number;       // 0–100
+  message: string;
 };
 
 type Props = {
   onCapture: (result: CaptureResult) => void;
   onCancel?: () => void;
-  /** Desired capture resolution. Defaults to 1280×720. */
   captureWidth?: number;
   captureHeight?: number;
 };
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-const ANALYSIS_FPS = 8; // frames per second analysed
-const STABLE_FRAMES_NEEDED = ANALYSIS_FPS * 3; // 3 seconds of stability
-const CAPTURE_WIDTH = 720;
-const CAPTURE_HEIGHT = 960; // 3:4 portrait — good for ID cards
-const PREVIEW_MAX_W = 480;
-const PREVIEW_ASPECT = CAPTURE_HEIGHT / CAPTURE_WIDTH; // ~1.33
+const CAPTURE_W = 720;
+const CAPTURE_H = 960;
+const STABLE_NEEDED = 24;          // ~3 s at 8 fps analysis
+const ANALYSIS_INTERVAL_MS = 125;  // 8 fps
+const OVAL_W = 0.58;               // fraction of video width
+const OVAL_H = 0.74;               // fraction of video height
 
-// Oval guide dimensions (% of preview width/height)
-const OVAL_W_RATIO = 0.55;
-const OVAL_H_RATIO = 0.72;
-
-// ── Component ────────────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AdvancedCamera({
   onCapture,
   onCancel,
-  captureWidth = CAPTURE_WIDTH,
-  captureHeight = CAPTURE_HEIGHT
+  captureWidth = CAPTURE_W,
+  captureHeight = CAPTURE_H
 }: Props) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null); // hidden, for capture
-  const overlayCanvasRef = useRef<HTMLCanvasElement>(null); // visible, for analysis overlay
-  const streamRef = useRef<MediaStream | null>(null);
-  const animFrameRef = useRef<number>(0);
-  const prevFrameRef = useRef<ImageData | null>(null);
-  const stableCountRef = useRef(0);
-  const countdownStartedRef = useRef(false);
-  const captureInFlightRef = useRef(false);
+  const videoRef       = useRef<HTMLVideoElement>(null);
+  const overlayRef     = useRef<HTMLCanvasElement>(null);
+  const captureRef     = useRef<HTMLCanvasElement>(null);
+  const streamRef      = useRef<MediaStream | null>(null);
+  const rafRef         = useRef(0);
+  const prevDataRef    = useRef<Uint8ClampedArray | null>(null);
+  const stableRef      = useRef(0);
+  const capturedRef    = useRef(false);
+  const lastAnalysisRef = useRef(0);
 
-  const [facing, setFacing] = useState<"user" | "environment">("user");
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [quality, setQuality] = useState<FaceQuality>({
-    centered: false,
-    bright: false,
-    sharp: false,
-    stable: false,
-    score: 0,
-    guidance: "Starting camera…"
-  });
+  const [facing, setFacing]     = useState<"user" | "environment">("user");
+  const [ready, setReady]       = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+  const [flash, setFlash]       = useState(false);
+  const [torchOn, setTorchOn]   = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [flash, setFlash] = useState(false);
-  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [quality, setQuality]   = useState<Quality>({
+    face: false, light: false, sharp: false, still: false,
+    score: 0, message: "Starting camera…"
+  });
 
-  // ── Camera lifecycle ───────────────────────────────────────────────────────
+  // ── Camera start / stop ───────────────────────────────────────────────────
 
   const stopCamera = useCallback(() => {
-    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    cancelAnimationFrame(rafRef.current);
+    streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
-    stableCountRef.current = 0;
-    countdownStartedRef.current = false;
-    captureInFlightRef.current = false;
-    setCountdown(null);
+    stableRef.current = 0;
+    capturedRef.current = false;
+    prevDataRef.current = null;
     setReady(false);
+    setCountdown(null);
+    setTorchOn(false);
+    setTorchSupported(false);
   }, []);
 
-  const startCamera = useCallback(
-    async (facingMode: "user" | "environment") => {
-      stopCamera();
-      setError(null);
-      setQuality((q) => ({ ...q, guidance: "Starting camera…" }));
+  const toggleTorch = useCallback(async () => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+    const next = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] });
+      setTorchOn(next);
+    } catch {
+      // torch not supported at runtime
+    }
+  }, [torchOn]);
 
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode,
-            width: { ideal: captureWidth },
-            height: { ideal: captureHeight },
-            frameRate: { ideal: 30 }
-          },
-          audio: false
-        });
+  const startCamera = useCallback(async (facingMode: "user" | "environment") => {
+    stopCamera();
+    setError(null);
+    setQuality(q => ({ ...q, message: "Starting camera…" }));
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode, width: { ideal: captureWidth }, height: { ideal: captureHeight }, frameRate: { ideal: 30 } },
+        audio: false
+      });
+      streamRef.current = stream;
+      // Detect torch capability
+      const track = stream.getVideoTracks()[0];
+      const caps = track?.getCapabilities() as Record<string, unknown> | undefined;
+      const hasTorch = !!(caps && "torch" in caps);
+      setTorchSupported(hasTorch);
+      setTorchOn(false);
+      const v = videoRef.current!;
+      v.srcObject = stream;
+      await v.play();
+      setReady(true);
+    } catch (e) {
+      const err = e instanceof DOMException
+        ? e.name === "NotAllowedError" ? "Camera permission denied. Please allow camera access."
+        : e.name === "NotFoundError"   ? "No camera found on this device."
+        : "Could not start camera."
+        : "Could not start camera.";
+      setError(err);
+    }
+  }, [stopCamera, captureWidth, captureHeight]);
 
-        streamRef.current = stream;
-        const video = videoRef.current!;
-        video.srcObject = stream;
-        await video.play();
-        setReady(true);
-      } catch (e) {
-        const msg =
-          e instanceof DOMException && e.name === "NotAllowedError"
-            ? "Camera permission denied. Please allow camera access in your browser settings."
-            : e instanceof DOMException && e.name === "NotFoundError"
-            ? "No camera found on this device."
-            : "Could not start camera. Please try again.";
-        setError(msg);
-      }
-    },
-    [stopCamera, captureWidth, captureHeight]
-  );
+  useEffect(() => { startCamera(facing); return stopCamera; }, [facing]); // eslint-disable-line
 
-  useEffect(() => {
-    startCamera(facing);
-    return stopCamera;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facing]);
+  // ── Capture ───────────────────────────────────────────────────────────────
 
-  // ── Frame analysis loop ────────────────────────────────────────────────────
+  const doCapture = useCallback(() => {
+    if (capturedRef.current) return;
+    capturedRef.current = true;
+    setFlash(true);
+    setTimeout(() => setFlash(false), 250);
+
+    const v = videoRef.current!;
+    const c = captureRef.current!;
+    c.width  = captureWidth;
+    c.height = captureHeight;
+    const ctx = c.getContext("2d")!;
+
+    // ── Centre-crop the video to the target portrait aspect ratio ────────────
+    // Without this, a landscape camera stream (e.g. 1920×1080) would be
+    // stretched into the portrait canvas, squishing faces horizontally.
+    const vW = v.videoWidth  || captureWidth;
+    const vH = v.videoHeight || captureHeight;
+    const targetAspect = captureWidth / captureHeight;   // e.g. 720/960 = 0.75
+    const videoAspect  = vW / vH;
+    let sx: number, sy: number, sw: number, sh: number;
+    if (videoAspect > targetAspect) {
+      // Video is wider than target — crop horizontally from centre
+      sh = vH;
+      sw = Math.round(vH * targetAspect);
+      sx = Math.round((vW - sw) / 2);
+      sy = 0;
+    } else {
+      // Video is taller than target — crop vertically from centre
+      sw = vW;
+      sh = Math.round(vW / targetAspect);
+      sx = 0;
+      sy = Math.round((vH - sh) / 2);
+    }
+
+    ctx.save();
+    ctx.scale(-1, 1);
+    // 9-param drawImage: crop (sx,sy,sw,sh) from source → dest (−W,0,W,H)
+    ctx.drawImage(v, sx, sy, sw, sh, -captureWidth, 0, captureWidth, captureHeight);
+    ctx.restore();
+
+    const dataUrl = c.toDataURL("image/jpeg", 0.92);
+    stopCamera();
+    onCapture({ dataUrl, width: captureWidth, height: captureHeight, qualityScore: 85 });
+  }, [captureWidth, captureHeight, onCapture, stopCamera]);
+
+  // ── Analysis + overlay render loop ────────────────────────────────────────
 
   useEffect(() => {
     if (!ready) return;
 
-    const video = videoRef.current!;
-    const overlay = overlayCanvasRef.current!;
-    const ctx = overlay.getContext("2d", { willReadFrequently: true })!;
-
-    let lastAnalysis = 0;
-    const analysisInterval = 1000 / ANALYSIS_FPS;
+    const video   = videoRef.current!;
+    const overlay = overlayRef.current!;
+    const ctx     = overlay.getContext("2d", { willReadFrequently: true })!;
+    let animating = true;
 
     function loop(ts: number) {
-      animFrameRef.current = requestAnimationFrame(loop);
-
+      if (!animating) return;
+      rafRef.current = requestAnimationFrame(loop);
       if (video.readyState < 2) return;
 
-      // Sync overlay canvas size to video
+      // sync canvas size
       if (overlay.width !== video.videoWidth || overlay.height !== video.videoHeight) {
-        overlay.width = video.videoWidth || 640;
+        overlay.width  = video.videoWidth  || 640;
         overlay.height = video.videoHeight || 480;
       }
+      const W = overlay.width, H = overlay.height;
 
-      const { width: W, height: H } = overlay;
-
-      // Draw mirrored video frame onto overlay
+      // ── Draw mirrored frame ──────────────────────────────────────────────
       ctx.save();
       ctx.scale(-1, 1);
       ctx.drawImage(video, -W, 0, W, H);
       ctx.restore();
 
-      // Only analyse at reduced FPS to save CPU
-      if (ts - lastAnalysis < analysisInterval) return;
-      lastAnalysis = ts;
+      // ── Run analysis at 8 fps ────────────────────────────────────────────
+      if (ts - lastAnalysisRef.current < ANALYSIS_INTERVAL_MS) {
+        drawOverlay(ctx, W, H, quality, stableRef.current);
+        return;
+      }
+      lastAnalysisRef.current = ts;
 
-      // ── Define oval region ───────────────────────────────────────────────
-      const ovalW = W * OVAL_W_RATIO;
-      const ovalH = H * OVAL_H_RATIO;
-      const ovalX = (W - ovalW) / 2;
-      const ovalY = (H - ovalH) / 2;
+      const oW = W * OVAL_W, oH = H * OVAL_H;
+      const oX = (W - oW) / 2,  oY = (H - oH) / 2;
 
-      // Sample a rectangle inscribed in the oval (75% of oval dims)
-      const sX = Math.round(ovalX + ovalW * 0.125);
-      const sY = Math.round(ovalY + ovalH * 0.125);
-      const sW = Math.round(ovalW * 0.75);
-      const sH = Math.round(ovalH * 0.75);
+      // sample rectangle inscribed in oval (inner 70 %)
+      const sX = Math.round(oX + oW * 0.15);
+      const sY = Math.round(oY + oH * 0.10);
+      const sW = Math.round(oW * 0.70);
+      const sH = Math.round(oH * 0.80);
 
       let frame: ImageData;
-      try {
-        frame = ctx.getImageData(sX, sY, sW, sH);
-      } catch {
-        return; // cross-origin or permission issue
-      }
+      try { frame = ctx.getImageData(sX, sY, sW, sH); }
+      catch { return; }
+      const d = frame.data, n = d.length / 4;
 
-      // ── Brightness ────────────────────────────────────────────────────────
+      // brightness
       let lumSum = 0;
-      for (let i = 0; i < frame.data.length; i += 4) {
-        const r = frame.data[i];
-        const g = frame.data[i + 1];
-        const b = frame.data[i + 2];
-        lumSum += 0.299 * r + 0.587 * g + 0.114 * b;
-      }
-      const pixelCount = frame.data.length / 4;
-      const avgLum = lumSum / pixelCount;
-      const bright = avgLum > 60 && avgLum < 230;
+      for (let i = 0; i < d.length; i += 4)
+        lumSum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      const avgLum = lumSum / n;
+      const light  = avgLum > 65 && avgLum < 225;
 
-      // ── Blur / edge energy ───────────────────────────────────────────────
-      let edgeEnergy = 0;
-      const d = frame.data;
-      const rowLen = sW * 4;
-      for (let row = 1; row < sH - 1; row++) {
-        for (let col = 1; col < sW - 1; col++) {
-          const i = (row * sW + col) * 4;
-          const top = (((row - 1) * sW + col) * 4);
-          const bot = (((row + 1) * sW + col) * 4);
-          const left = ((row * sW + (col - 1)) * 4);
-          const right = ((row * sW + (col + 1)) * 4);
-          for (let c = 0; c < 3; c++) {
-            const gx = d[right + c] - d[left + c];
-            const gy = d[bot + c] - d[top + c];
-            edgeEnergy += gx * gx + gy * gy;
+      // edge energy (sharpness)
+      let edge = 0;
+      for (let r = 1; r < sH - 1; r++) {
+        for (let c = 1; c < sW - 1; c++) {
+          const i = (r * sW + c) * 4;
+          for (let ch = 0; ch < 3; ch++) {
+            const gx = d[(r * sW + c + 1) * 4 + ch] - d[(r * sW + c - 1) * 4 + ch];
+            const gy = d[((r + 1) * sW + c) * 4 + ch] - d[((r - 1) * sW + c) * 4 + ch];
+            edge += gx * gx + gy * gy;
           }
         }
       }
-      const normEdge = edgeEnergy / pixelCount;
-      const sharp = normEdge > 150; // tuned empirically
+      const sharp = (edge / n) > 120;
 
-      // ── Motion blur (frame diff) ──────────────────────────────────────────
-      let motionScore = 0;
-      if (prevFrameRef.current && prevFrameRef.current.data.length === frame.data.length) {
-        const prev = prevFrameRef.current;
-        for (let i = 0; i < frame.data.length; i += 4) {
-          const dr = frame.data[i] - prev.data[i];
-          const dg = frame.data[i + 1] - prev.data[i + 1];
-          const db = frame.data[i + 2] - prev.data[i + 2];
-          motionScore += Math.abs(dr) + Math.abs(dg) + Math.abs(db);
-        }
-        motionScore /= pixelCount * 3;
+      // motion (frame diff)
+      let motion = 0;
+      if (prevDataRef.current && prevDataRef.current.length === d.length) {
+        const p = prevDataRef.current;
+        for (let i = 0; i < d.length; i += 4)
+          motion += Math.abs(d[i] - p[i]) + Math.abs(d[i+1] - p[i+1]) + Math.abs(d[i+2] - p[i+2]);
+        motion /= n * 3;
       }
-      prevFrameRef.current = frame;
-      const stable = motionScore < 18;
+      prevDataRef.current = new Uint8ClampedArray(d);
+      const still = motion < 20;
 
-      // ── Centered heuristic: face-region contrast vs. outer ring ──────────
-      // A face present in the oval should show skin-tone luminance
-      const skinLike = avgLum > 80 && avgLum < 200;
-      const centered = skinLike && bright;
+      // face heuristic: skin-tone luminance in the oval region
+      const face = avgLum > 75 && avgLum < 210 && light;
 
-      // ── Composite score ───────────────────────────────────────────────────
-      const score =
-        (centered ? 30 : 0) +
-        (bright ? 20 : 0) +
-        (sharp ? 25 : 0) +
-        (stable ? 25 : 0);
+      const allGood = face && light && sharp && still;
+      const score   = (face ? 25 : 0) + (light ? 25 : 0) + (sharp ? 25 : 0) + (still ? 25 : 0);
 
-      // ── Guidance message ──────────────────────────────────────────────────
-      let guidance = "Position your face inside the oval";
-      if (!bright) {
-        guidance = avgLum <= 60 ? "Too dark — move to a brighter area" : "Too bright — avoid direct light";
-      } else if (!sharp) {
-        guidance = "Hold steady — image is blurry";
-      } else if (!centered) {
-        guidance = "Position your face inside the oval";
-      } else if (!stable) {
-        guidance = "Hold still…";
-      } else {
-        const remaining = Math.max(
-          0,
-          Math.ceil((STABLE_FRAMES_NEEDED - stableCountRef.current) / ANALYSIS_FPS)
-        );
-        guidance = remaining > 0 ? `Hold still — auto-capture in ${remaining}s` : "Ready!";
+      // guidance message
+      let message = "Position your face inside the oval";
+      if (!light)       message = avgLum < 65 ? "Too dark — move to brighter area" : "Too bright — step away from light";
+      else if (!sharp)  message = "Hold steady — blurry image";
+      else if (!face)   message = "Centre your face inside the oval";
+      else if (!still)  message = "Hold still…";
+      else {
+        const secLeft = Math.ceil((STABLE_NEEDED - stableRef.current) / (1000 / ANALYSIS_INTERVAL_MS));
+        message = secLeft > 0 ? `Hold still — capturing in ${secLeft}s` : "✓ Perfect!";
       }
 
-      // ── Draw oval overlay ─────────────────────────────────────────────────
-      const allGood = centered && bright && sharp && stable;
-      const color = allGood ? "#22c55e" : "#f59e0b";
-      const shadow = allGood ? "rgba(34,197,94,0.6)" : "rgba(245,158,11,0.4)";
+      const newQ: Quality = { face, light, sharp, still, score, message };
+      setQuality(newQ);
 
-      // Dark vignette outside oval
-      ctx.save();
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
-      ctx.fillRect(0, 0, W, H);
-      // Punch out oval (subtract)
-      ctx.globalCompositeOperation = "destination-out";
-      ctx.beginPath();
-      ctx.ellipse(W / 2, H / 2, ovalW / 2, ovalH / 2, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalCompositeOperation = "source-over";
-
-      // Oval border
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
-      ctx.shadowColor = shadow;
-      ctx.shadowBlur = 12;
-      ctx.beginPath();
-      ctx.ellipse(W / 2, H / 2, ovalW / 2, ovalH / 2, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-
-      // Corner bracket accents
-      const bLen = 24;
-      const bOff = 8;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
-      const cx = W / 2;
-      const cy = H / 2;
-      const rx = ovalW / 2 + bOff;
-      const ry = ovalH / 2 + bOff;
-      [[0, -1], [0, 1], [-1, 0], [1, 0]].forEach(([sx, sy]) => {
-        const px = cx + sx * rx;
-        const py = cy + sy * ry;
-        ctx.beginPath();
-        ctx.moveTo(px - sx * bLen, py);
-        ctx.lineTo(px, py);
-        ctx.lineTo(px, py - sy * bLen);
-        ctx.stroke();
-      });
-
-      ctx.restore();
-
-      // ── Stability counter & countdown ─────────────────────────────────────
+      // stability counter
       if (allGood) {
-        stableCountRef.current += 1;
+        stableRef.current++;
+        setCountdown(Math.max(1, Math.ceil((STABLE_NEEDED - stableRef.current) / (1000 / ANALYSIS_INTERVAL_MS))));
       } else {
-        stableCountRef.current = 0;
-        if (countdownTimerRef.current) {
-          clearInterval(countdownTimerRef.current);
-          countdownTimerRef.current = null;
-          countdownStartedRef.current = false;
-          setCountdown(null);
-        }
+        stableRef.current = 0;
+        setCountdown(null);
       }
 
-      if (stableCountRef.current >= STABLE_FRAMES_NEEDED && !countdownStartedRef.current) {
-        countdownStartedRef.current = true;
-        doCapture();
-      }
+      if (stableRef.current >= STABLE_NEEDED && !capturedRef.current) doCapture();
 
-      setQuality({ centered, bright, sharp, stable, score, guidance });
+      drawOverlay(ctx, W, H, newQ, stableRef.current);
     }
 
-    animFrameRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(animFrameRef.current);
-  }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
+    rafRef.current = requestAnimationFrame(loop);
+    return () => { animating = false; cancelAnimationFrame(rafRef.current); };
+  }, [ready, doCapture]); // eslint-disable-line
 
-  // ── Capture ────────────────────────────────────────────────────────────────
+  // ── Overlay painter (pure canvas) ─────────────────────────────────────────
 
-  const doCapture = useCallback(async () => {
-    if (captureInFlightRef.current) return;
-    captureInFlightRef.current = true;
+  function drawOverlay(
+    ctx: CanvasRenderingContext2D,
+    W: number, H: number,
+    q: Quality,
+    stable: number
+  ) {
+    const oW = W * OVAL_W, oH = H * OVAL_H;
+    const cx = W / 2, cy = H / 2;
+    const rx = oW / 2, ry = oH / 2;
+    const allGood = q.face && q.light && q.sharp && q.still;
+    const progress = stable / STABLE_NEEDED;              // 0–1
+    const ringColor = allGood ? "#22c55e" : "#f59e0b";
+    const glowColor = allGood ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.35)";
 
-    // Flash effect
-    setFlash(true);
-    setTimeout(() => setFlash(false), 200);
-
-    const video = videoRef.current!;
-    const canvas = canvasRef.current!;
-    canvas.width = captureWidth;
-    canvas.height = captureHeight;
-    const ctx = canvas.getContext("2d")!;
-
-    // Mirror flip to produce correct (non-mirrored) image
+    // Dark vignette — clip to "everything outside the oval" using evenodd rule
+    // so the video inside the oval remains fully visible
     ctx.save();
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, -captureWidth, 0, captureWidth, captureHeight);
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);                                        // outer rect (CW)
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2, true);       // oval hole (CCW)
+    ctx.clip("evenodd");                                          // only paint outside the oval
+    ctx.fillStyle = "rgba(0,0,0,0.68)";
+    ctx.fillRect(0, 0, W, H);
     ctx.restore();
 
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    // Outer glow ellipse
+    ctx.shadowColor  = glowColor;
+    ctx.shadowBlur   = 20;
+    ctx.strokeStyle  = ringColor;
+    ctx.lineWidth    = 3;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx + 2, ry + 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
 
-    stopCamera();
+    // Countdown arc (progress ring around the oval)
+    if (allGood && progress > 0) {
+      ctx.save();
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth   = 5;
+      ctx.shadowColor = "rgba(34,197,94,0.8)";
+      ctx.shadowBlur  = 14;
+      // Draw an arc approximation by scaling
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(1, ry / rx);
+      ctx.beginPath();
+      ctx.arc(0, 0, rx + 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.stroke();
+      ctx.restore();
+      ctx.restore();
+    }
 
-    onCapture({
-      dataUrl,
-      width: captureWidth,
-      height: captureHeight,
-      qualityScore: 85 // heuristic; real score from server Rekognition
+    // Corner bracket accents (4 corners of the oval bounding box)
+    const bLen = Math.min(W, H) * 0.045;
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur  = 8;
+    ctx.strokeStyle = ringColor;
+    ctx.lineWidth   = 3;
+    const corners = [
+      { x: cx - rx, y: cy - ry, dx: 1,  dy: 1  },
+      { x: cx + rx, y: cy - ry, dx: -1, dy: 1  },
+      { x: cx - rx, y: cy + ry, dx: 1,  dy: -1 },
+      { x: cx + rx, y: cy + ry, dx: -1, dy: -1 }
+    ];
+    corners.forEach(({ x, y, dx, dy }) => {
+      ctx.beginPath();
+      ctx.moveTo(x + dx * bLen, y);
+      ctx.lineTo(x, y);
+      ctx.lineTo(x, y + dy * bLen);
+      ctx.stroke();
     });
-  }, [captureWidth, captureHeight, onCapture, stopCamera]);
+    ctx.shadowBlur = 0;
 
-  const handleManualCapture = () => {
-    if (!ready) return;
-    doCapture();
-  };
+    // Top guidance label inside oval
+    const labelY = cy - ry + ry * 0.16;
+    ctx.font      = `600 ${Math.round(H * 0.022)}px -apple-system, sans-serif`;
+    ctx.textAlign = "center";
+    const labelText = allGood ? "✓ Perfect — hold still!" : "Align face inside the oval";
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillText(labelText, cx + 1, labelY + 1);
+    ctx.fillStyle = allGood ? "#4ade80" : "rgba(255,255,255,0.92)";
+    ctx.fillText(labelText, cx, labelY);
 
-  const handleFlip = () => {
-    setFacing((f) => (f === "user" ? "environment" : "user"));
-  };
+    ctx.restore();
+  }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
-  const allGood = quality.centered && quality.bright && quality.sharp && quality.stable;
+  const allGood = quality.face && quality.light && quality.sharp && quality.still;
+
+  const INDICATORS = [
+    { key: "face",  label: "Face",  ok: quality.face  },
+    { key: "light", label: "Light", ok: quality.light },
+    { key: "sharp", label: "Sharp", ok: quality.sharp },
+    { key: "still", label: "Still", ok: quality.still }
+  ] as const;
 
   return (
-    <div className="relative flex flex-col items-center gap-3 select-none">
-      {/* ── Camera viewport ── */}
-      <div
-        className="relative overflow-hidden rounded-2xl bg-black shadow-2xl"
-        style={{ width: "100%", maxWidth: PREVIEW_MAX_W, aspectRatio: `${1 / PREVIEW_ASPECT}` }}
-        aria-label="Camera preview"
-      >
-        {/* Raw video (mirrored via CSS; overlay canvas does the actual mirroring for capture) */}
-        <video
-          ref={videoRef}
-          muted
-          playsInline
-          className="absolute inset-0 w-full h-full object-cover"
-          style={{ transform: "scaleX(-1)" }}
-          aria-hidden="true"
-        />
+    <div className="flex flex-col items-center gap-4 select-none w-full">
 
-        {/* Analysis + overlay canvas (drawn mirrored, sits on top) */}
-        <canvas
-          ref={overlayCanvasRef}
+      {/* ── Viewport ── */}
+      <div className="relative w-full overflow-hidden rounded-3xl bg-black shadow-2xl"
+           style={{ aspectRatio: "3/4", maxWidth: 420 }}>
+
+        {/* Raw mirrored video (hidden behind canvas) */}
+        <video ref={videoRef} muted playsInline
+          className="absolute inset-0 w-full h-full object-cover opacity-0"
+          aria-hidden="true" />
+
+        {/* Overlay canvas — draws video + vignette + oval + guides */}
+        <canvas ref={overlayRef}
           className="absolute inset-0 w-full h-full"
           style={{ objectFit: "cover" }}
-          aria-hidden="true"
-        />
+          aria-hidden="true" />
 
-        {/* Flash overlay */}
+        {/* White flash on capture */}
         <AnimatePresence>
           {flash && (
-            <motion.div
-              key="flash"
-              className="absolute inset-0 bg-white"
-              initial={{ opacity: 0.8 }}
-              animate={{ opacity: 0 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-            />
+            <motion.div key="flash" className="absolute inset-0 bg-white rounded-3xl"
+              initial={{ opacity: 0.9 }} animate={{ opacity: 0 }}
+              exit={{ opacity: 0 }} transition={{ duration: 0.25 }} />
           )}
         </AnimatePresence>
 
-        {/* Countdown badge */}
+        {/* Countdown badge centre-bottom */}
         <AnimatePresence>
           {countdown !== null && (
-            <motion.div
-              key="countdown"
-              className="absolute bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-green-500 flex items-center justify-center shadow-lg"
-              initial={{ scale: 0.5, opacity: 0 }}
+            <motion.div key="cd"
+              className="absolute bottom-6 left-1/2 -translate-x-1/2
+                         w-16 h-16 rounded-full bg-green-500/90 backdrop-blur
+                         flex items-center justify-center shadow-xl shadow-green-500/40 z-10"
+              initial={{ scale: 0, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.5, opacity: 0 }}
-            >
-              <span className="text-white text-2xl font-bold">{countdown}</span>
+              exit={{ scale: 0, opacity: 0 }}>
+              <span className="text-white text-3xl font-bold tabular-nums">{countdown}</span>
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Error overlay */}
         {error && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 p-6 text-center">
-            <ZapOff className="text-red-400 w-10 h-10" />
-            <p className="text-white text-sm">{error}</p>
-            <button
-              onClick={() => startCamera(facing)}
-              className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition"
-            >
-              Retry
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3
+                          bg-black/80 backdrop-blur p-6 text-center rounded-3xl z-20">
+            <AlertCircle className="text-red-400 w-10 h-10" />
+            <p className="text-white text-sm leading-relaxed">{error}</p>
+            <button onClick={() => startCamera(facing)}
+              className="mt-1 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white
+                         text-sm font-semibold rounded-xl transition">
+              Try Again
             </button>
           </div>
         )}
 
         {/* Top controls */}
         <div className="absolute top-3 right-3 flex gap-2 z-10">
-          <button
-            onClick={handleFlip}
-            aria-label="Switch camera"
-            className="p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition"
-          >
+          {/* Torch — only shown when back camera is active and supported */}
+          {facing === "environment" && torchSupported && (
+            <button onClick={() => void toggleTorch()}
+              aria-label={torchOn ? "Turn off flash" : "Turn on flash"}
+              className={`p-2.5 rounded-full backdrop-blur transition border text-white
+                ${torchOn
+                  ? "bg-amber-500/80 border-amber-400/60 shadow-lg shadow-amber-500/40"
+                  : "bg-black/50 border-white/10 hover:bg-black/70"}`}>
+              {torchOn ? <Zap className="w-4 h-4 fill-white" /> : <ZapOff className="w-4 h-4" />}
+            </button>
+          )}
+          <button onClick={() => setFacing(f => f === "user" ? "environment" : "user")}
+            aria-label="Flip camera"
+            className="p-2.5 rounded-full bg-black/50 backdrop-blur
+                       hover:bg-black/70 text-white transition border border-white/10">
             <FlipHorizontal2 className="w-4 h-4" />
           </button>
           {onCancel && (
-            <button
-              onClick={onCancel}
-              aria-label="Cancel"
-              className="p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition"
-            >
+            <button onClick={onCancel} aria-label="Cancel"
+              className="p-2.5 rounded-full bg-black/50 backdrop-blur
+                         hover:bg-black/70 text-white transition border border-white/10">
               <X className="w-4 h-4" />
             </button>
           )}
         </div>
       </div>
 
-      {/* Hidden capture canvas */}
-      <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
+      {/* ── Hidden capture canvas ── */}
+      <canvas ref={captureRef} className="hidden" aria-hidden="true" />
 
-      {/* ── Quality indicator bar ── */}
-      <div className="w-full max-w-sm space-y-1">
-        <div className="flex items-center justify-between text-xs text-gray-400 px-1">
-          <span>Quality</span>
+      {/* ── Quality indicators ── */}
+      <div className="grid grid-cols-4 gap-2 w-full max-w-sm">
+        {INDICATORS.map(({ key, label, ok }) => (
+          <motion.div key={key}
+            animate={{ scale: ok ? [1, 1.05, 1] : 1 }}
+            transition={{ duration: 0.3 }}
+            className={`flex flex-col items-center gap-1 py-2 rounded-2xl border text-xs font-semibold transition-all
+              ${ok
+                ? "bg-green-500/15 border-green-500/40 text-green-400"
+                : "bg-white/5 border-white/10 text-gray-500"}`}>
+            {ok
+              ? <CheckCircle2 className="w-4 h-4" />
+              : <div className="w-4 h-4 rounded-full border-2 border-current" />}
+            <span>{label}</span>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* ── Progress bar ── */}
+      <div className="w-full max-w-sm space-y-1.5">
+        <div className="flex justify-between text-xs text-gray-400 px-0.5">
+          <span>Photo quality</span>
           <span className={allGood ? "text-green-400 font-semibold" : "text-amber-400"}>
             {quality.score}%
           </span>
         </div>
-        <div className="h-1.5 rounded-full bg-gray-700 overflow-hidden">
+        <div className="h-2 rounded-full bg-white/10 overflow-hidden">
           <motion.div
             className={`h-full rounded-full ${allGood ? "bg-green-500" : "bg-amber-400"}`}
             animate={{ width: `${quality.score}%` }}
-            transition={{ duration: 0.3 }}
-          />
-        </div>
-
-        {/* Mini indicators */}
-        <div className="flex gap-2 pt-1">
-          {[
-            { label: "Face", ok: quality.centered },
-            { label: "Light", ok: quality.bright },
-            { label: "Sharp", ok: quality.sharp },
-            { label: "Still", ok: quality.stable }
-          ].map(({ label, ok }) => (
-            <div
-              key={label}
-              className={`flex-1 text-center text-[10px] py-0.5 rounded font-medium ${
-                ok ? "bg-green-500/20 text-green-400" : "bg-gray-700 text-gray-500"
-              }`}
-            >
-              {label}
-            </div>
-          ))}
+            transition={{ duration: 0.4, ease: "easeOut" }} />
         </div>
       </div>
 
-      {/* ── Guidance text ── */}
-      <p
-        className={`text-sm font-medium text-center transition-colors ${
-          allGood ? "text-green-400" : "text-amber-300"
-        }`}
-        role="status"
-        aria-live="polite"
-      >
-        {quality.guidance}
-      </p>
+      {/* ── Live guidance message ── */}
+      <motion.p
+        key={quality.message}
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={`text-sm font-medium text-center transition-colors
+          ${allGood ? "text-green-400" : "text-amber-300"}`}
+        role="status" aria-live="polite">
+        {quality.message}
+      </motion.p>
 
-      {/* ── Capture button ── */}
-      <div className="flex gap-3 items-center">
-        <button
-          onClick={handleManualCapture}
+      {/* ── Buttons ── */}
+      <div className="flex gap-3 w-full max-w-sm">
+        <motion.button
+          onClick={() => { if (ready) doCapture(); }}
           disabled={!ready}
-          aria-label="Capture photo"
-          className={`relative flex items-center gap-2 px-6 py-3 rounded-full font-semibold text-sm transition shadow-lg ${
-            ready && allGood
-              ? "bg-green-500 hover:bg-green-600 text-white"
-              : ready
-              ? "bg-blue-600 hover:bg-blue-700 text-white"
-              : "bg-gray-700 text-gray-500 cursor-not-allowed"
-          }`}
-        >
-          {allGood ? (
-            <Zap className="w-4 h-4" />
-          ) : (
-            <Camera className="w-4 h-4" />
-          )}
+          whileTap={{ scale: 0.96 }}
+          className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl
+            font-semibold text-sm transition shadow-lg
+            ${!ready
+              ? "bg-white/10 text-gray-500 cursor-not-allowed"
+              : allGood
+                ? "bg-green-500 hover:bg-green-400 text-white shadow-green-500/30"
+                : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/30"}`}>
+          <Camera className="w-4 h-4" />
           {allGood ? "Capture Now" : "Capture"}
-        </button>
+        </motion.button>
 
-        <button
-          onClick={() => startCamera(facing)}
-          aria-label="Restart camera"
-          className="p-3 rounded-full bg-gray-800 hover:bg-gray-700 text-gray-300 transition"
-        >
+        <button onClick={() => startCamera(facing)} aria-label="Restart camera"
+          className="p-3.5 rounded-2xl bg-white/10 hover:bg-white/15
+                     text-gray-300 transition border border-white/10">
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
 
-      <p className="text-xs text-gray-500 text-center max-w-xs">
-        Auto-captures after 3 seconds of a stable, well-lit face.
-        <br />
-        You can also tap <strong>Capture</strong> manually.
+      <p className="text-xs text-gray-500 text-center max-w-xs leading-relaxed">
+        Auto-captures in <strong className="text-gray-400">3 seconds</strong> once your face is
+        centred, lit, sharp and still. Or tap <strong className="text-gray-400">Capture</strong> manually.
       </p>
     </div>
   );

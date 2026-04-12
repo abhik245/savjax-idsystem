@@ -135,15 +135,23 @@ export type AnyElement =
   | ShapeElement
   | ImageElement;
 
-/** Card size presets in mm */
-export type CardSizePreset =
-  | "CR80"          // 85.6 × 54 — standard ID
-  | "A6"            // 148 × 105
-  | "CUSTOM";
+/** Card size presets in mm (from Bharti Card / iDJet standard sizes) */
+export const CARD_SIZES = {
+  CR80:     { w: 85.6, h: 54,   label: "CR-80 Horizontal (85.6×54 mm)" },
+  CR80V:    { w: 54,   h: 85.6, label: "CR-80 Vertical (54×85.6 mm)" },
+  W70x100:  { w: 100,  h: 70,   label: "70×100 mm" },
+  W80x110:  { w: 110,  h: 80,   label: "80×110 mm" },
+  W100x70:  { w: 70,   h: 100,  label: "100×70 mm" },
+  W102x140: { w: 140,  h: 102,  label: "102×140 mm" },
+  A6:       { w: 148,  h: 105,  label: "A6 (148×105 mm)" },
+} as const;
 
-export const CARD_SIZES: Record<Exclude<CardSizePreset, "CUSTOM">, { w: number; h: number; label: string }> = {
-  CR80: { w: 85.6, h: 54, label: "CR-80 Standard ID (85.6×54 mm)" },
-  A6: { w: 148, h: 105, label: "A6 (148×105 mm)" }
+export type CardSizePreset = keyof typeof CARD_SIZES | "CUSTOM";
+
+export type Background = {
+  color: string;
+  imageUrl?: string;
+  gradient?: { from: string; to: string; angle: number };
 };
 
 /** The full template document */
@@ -154,13 +162,19 @@ export interface CardTemplate {
   /** Card dimensions in mm */
   cardWidth: number;
   cardHeight: number;
-  /** Canvas background */
-  background: {
-    color: string;
-    imageUrl?: string;
-    gradient?: { from: string; to: string; angle: number };
-  };
+  /** Front side canvas background */
+  background: Background;
+  /** Front side elements */
   elements: AnyElement[];
+  /** Optional back side — same card dimensions */
+  backSide?: {
+    background: Background;
+    elements: AnyElement[];
+  };
+  /** Thumbnail tag for gallery filtering */
+  orientation?: "horizontal" | "vertical";
+  /** Display category shown in gallery */
+  category?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -168,5 +182,6 @@ export interface CardTemplate {
 /** History entry for undo/redo */
 export type HistoryEntry = {
   elements: AnyElement[];
-  background: CardTemplate["background"];
+  background: Background;
+  backSide?: CardTemplate["backSide"];
 };
