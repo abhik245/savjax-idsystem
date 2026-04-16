@@ -72,8 +72,27 @@ const nextConfig = {
   // Brotli / gzip compression
   compress: true,
 
+  experimental: {
+    // Tree-shake barrel files — reduces lucide-react from ~400 kB to only icons used
+    optimizePackageImports: ["lucide-react"],
+  },
+
   async headers() {
     return [
+      {
+        // Immutable cache for versioned static chunks — browser never re-downloads these
+        source: "/_next/static/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" }
+        ]
+      },
+      {
+        // Short cache for public assets (images, fonts, icons)
+        source: "/(:path((?!_next).*))\\.(ico|png|jpg|jpeg|svg|webp|woff2|woff)",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=86400, stale-while-revalidate=604800" }
+        ]
+      },
       {
         source: "/(.*)",
         headers: [

@@ -16,7 +16,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { Camera, FlipHorizontal2, RefreshCw, X, CheckCircle2, AlertCircle, Zap, ZapOff } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -426,29 +425,20 @@ export default function AdvancedCamera({
           style={{ objectFit: "cover" }}
           aria-hidden="true" />
 
-        {/* White flash on capture */}
-        <AnimatePresence>
-          {flash && (
-            <motion.div key="flash" className="absolute inset-0 bg-white rounded-3xl"
-              initial={{ opacity: 0.9 }} animate={{ opacity: 0 }}
-              exit={{ opacity: 0 }} transition={{ duration: 0.25 }} />
-          )}
-        </AnimatePresence>
+        {/* White flash on capture — CSS keyframe (no framer-motion) */}
+        {flash && (
+          <div className="absolute inset-0 bg-white rounded-3xl animate-flash-out pointer-events-none" />
+        )}
 
-        {/* Countdown badge centre-bottom */}
-        <AnimatePresence>
-          {countdown !== null && (
-            <motion.div key="cd"
-              className="absolute bottom-6 left-1/2 -translate-x-1/2
-                         w-16 h-16 rounded-full bg-green-500/90 backdrop-blur
-                         flex items-center justify-center shadow-xl shadow-green-500/40 z-10"
-              initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0, opacity: 0 }}>
-              <span className="text-white text-3xl font-bold tabular-nums">{countdown}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* Countdown badge centre-bottom — CSS scale-in */}
+        {countdown !== null && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2
+                       w-16 h-16 rounded-full bg-green-500/90 backdrop-blur
+                       flex items-center justify-center shadow-xl shadow-green-500/40 z-10
+                       animate-scale-in">
+            <span className="text-white text-3xl font-bold tabular-nums">{countdown}</span>
+          </div>
+        )}
 
         {/* Error overlay */}
         {error && (
@@ -499,18 +489,17 @@ export default function AdvancedCamera({
       {/* ── Quality indicators ── */}
       <div className="grid grid-cols-4 gap-2 w-full max-w-sm">
         {INDICATORS.map(({ key, label, ok }) => (
-          <motion.div key={key}
-            animate={{ scale: ok ? [1, 1.05, 1] : 1 }}
-            transition={{ duration: 0.3 }}
-            className={`flex flex-col items-center gap-1 py-2 rounded-2xl border text-xs font-semibold transition-all
+          <div key={key}
+            className={`flex flex-col items-center gap-1 py-2 rounded-2xl border text-xs font-semibold
+              transition-all duration-300
               ${ok
-                ? "bg-green-500/15 border-green-500/40 text-green-400"
-                : "bg-white/5 border-white/10 text-gray-500"}`}>
+                ? "bg-green-500/15 border-green-500/40 text-green-400 scale-105"
+                : "bg-white/5 border-white/10 text-gray-500 scale-100"}`}>
             {ok
               ? <CheckCircle2 className="w-4 h-4" />
               : <div className="w-4 h-4 rounded-full border-2 border-current" />}
             <span>{label}</span>
-          </motion.div>
+          </div>
         ))}
       </div>
 
@@ -523,32 +512,27 @@ export default function AdvancedCamera({
           </span>
         </div>
         <div className="h-2 rounded-full bg-white/10 overflow-hidden">
-          <motion.div
-            className={`h-full rounded-full ${allGood ? "bg-green-500" : "bg-amber-400"}`}
-            animate={{ width: `${quality.score}%` }}
-            transition={{ duration: 0.4, ease: "easeOut" }} />
+          <div
+            className={`h-full rounded-full transition-[width] duration-400 ease-out ${allGood ? "bg-green-500" : "bg-amber-400"}`}
+            style={{ width: `${quality.score}%` }} />
         </div>
       </div>
 
       {/* ── Live guidance message ── */}
-      <motion.p
-        key={quality.message}
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        className={`text-sm font-medium text-center transition-colors
+      <p
+        className={`text-sm font-medium text-center transition-colors duration-200
           ${allGood ? "text-green-400" : "text-amber-300"}`}
         role="status" aria-live="polite">
         {quality.message}
-      </motion.p>
+      </p>
 
       {/* ── Buttons ── */}
       <div className="flex gap-3 w-full max-w-sm">
-        <motion.button
+        <button
           onClick={() => { if (ready) doCapture(); }}
           disabled={!ready}
-          whileTap={{ scale: 0.96 }}
           className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl
-            font-semibold text-sm transition shadow-lg
+            font-semibold text-sm transition-all shadow-lg active:scale-95
             ${!ready
               ? "bg-white/10 text-gray-500 cursor-not-allowed"
               : allGood
@@ -556,7 +540,7 @@ export default function AdvancedCamera({
                 : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/30"}`}>
           <Camera className="w-4 h-4" />
           {allGood ? "Capture Now" : "Capture"}
-        </motion.button>
+        </button>
 
         <button onClick={() => startCamera(facing)} aria-label="Restart camera"
           className="p-3.5 rounded-2xl bg-white/10 hover:bg-white/15

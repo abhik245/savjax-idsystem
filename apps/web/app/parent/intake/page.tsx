@@ -1,6 +1,5 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { Camera, CheckCircle2, ChevronRight, Plus, Save, ShieldCheck, Upload, Users } from "lucide-react";
 import { ChangeEvent, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import AdvancedCamera, { type CaptureResult } from "@/components/camera/AdvancedCamera";
@@ -923,9 +922,9 @@ function IntakePortalInner() {
             </span>
           </div>
           <div className="mt-3 h-2 rounded-full bg-[rgba(15,60,120,0.3)]">
-            <motion.div
-              className="h-2 rounded-full bg-[linear-gradient(90deg,#0F3C78,#1C6ED5)]"
-              animate={{ width: `${progress}%` }}
+            <div
+              className="h-2 rounded-full bg-[linear-gradient(90deg,#0F3C78,#1C6ED5)] transition-[width] duration-500 ease-out"
+              style={{ width: `${progress}%` }}
             />
           </div>
         </div>

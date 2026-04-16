@@ -3,11 +3,30 @@
 }
 
 {$APP_DOMAIN} {
-	encode zstd gzip
+	# Brotli first, then zstd, then gzip — best compression ratio
+	encode {
+		zstd
+		gzip
+		minimum_length 1024
+	}
+
+	# Long-lived immutable cache for Next.js versioned static chunks
+	@static path /_next/static/*
+	header @static Cache-Control "public, max-age=31536000, immutable"
+	header @static X-Cache "HIT-STATIC"
+
+	# Short cache for public static files
+	@public path /favicon.ico /robots.txt *.png *.jpg *.jpeg *.svg *.webp *.woff2
+	header @public Cache-Control "public, max-age=86400, stale-while-revalidate=604800"
+
 	reverse_proxy web:3000
 }
 
 {$API_DOMAIN} {
-	encode zstd gzip
+	encode {
+		zstd
+		gzip
+		minimum_length 1024
+	}
 	reverse_proxy api:4000
 }
