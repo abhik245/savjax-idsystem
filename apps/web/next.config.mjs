@@ -87,13 +87,6 @@ const nextConfig = {
         ]
       },
       {
-        // Short cache for public assets (images, fonts, icons)
-        source: "/(:path((?!_next).*))\\.(ico|png|jpg|jpeg|svg|webp|woff2|woff)",
-        headers: [
-          { key: "Cache-Control", value: "public, max-age=86400, stale-while-revalidate=604800" }
-        ]
-      },
-      {
         source: "/(.*)",
         headers: [
           { key: "X-Frame-Options", value: "DENY" },
