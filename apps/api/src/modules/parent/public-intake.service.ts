@@ -395,6 +395,48 @@ export class PublicIntakeService {
     };
   }
 
+  async createAnonSession(dto: { intakeToken: string }, context: RequestContext = {}) {
+    const link = await this.loadLink(dto.intakeToken);
+    const submissionModel = this.readSubmissionModel(link);
+    const actorType = this.resolveActorType(link, submissionModel);
+
+    const sessionToken = randomBytes(32).toString("hex");
+    const tokenHash = this.hash(sessionToken);
+    const now = new Date();
+    const expiresAt = new Date(Date.now() + VERIFIED_SESSION_TTL_MS);
+
+    const session = await this.prisma.intakeAuthSession.create({
+      data: {
+        intakeLinkId: link.id,
+        campaignId: link.campaign?.id ?? null,
+        mobileNumber: "ANON",
+        otpHash: this.hash("ANON"),
+        otpStatus: IntakeOtpStatus.VERIFIED,
+        actorType,
+        verifiedAt: now,
+        expiresAt,
+        sessionStatus: IntakeSessionStatus.VERIFIED,
+        sessionTokenHash: tokenHash,
+        allowMobileEdit: true,
+        duplicatePolicy: submissionModel.duplicatePolicy,
+        ipAddress: context.ip || null,
+        userAgent: context.userAgent || null
+      }
+    });
+
+    await this.auditSession(session.id, "ANON_SESSION_CREATED", context, {
+      actorType,
+      expiresAt: expiresAt.toISOString()
+    });
+
+    return {
+      message: "Intake session ready",
+      intakeSessionToken: sessionToken,
+      expiresAt,
+      actorType: session.actorType
+    };
+  }
+
   async submit(sessionToken: string, dto: SubmitStudentDto, context: RequestContext = {}) {
     const session = await this.resolveVerifiedSession(sessionToken, context);
     const link = session.intakeLink;
@@ -402,9 +444,13 @@ export class PublicIntakeService {
     const submissionModel = this.readSubmissionModel(link);
     const actorType = session.actorType;
 
-    const verifiedMobile = session.mobileNumber;
+    // When session was created without OTP (anon), use the mobile from the submitted form
+    const isAnonSession = session.mobileNumber === "ANON";
+    const verifiedMobile = isAnonSession
+      ? (this.normalizeMobile(dto.mobile) || "ANON")
+      : session.mobileNumber;
     const visibleMobile =
-      submissionModel.allowMobileEditAfterVerification && this.normalizeMobile(dto.mobile)
+      (isAnonSession || submissionModel.allowMobileEditAfterVerification) && this.normalizeMobile(dto.mobile)
         ? this.normalizeMobile(dto.mobile)
         : verifiedMobile;
     const primaryValue =

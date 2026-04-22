@@ -11,6 +11,14 @@ import { VerifyIntakeOtpDto } from "./dto/verify-intake-otp.dto";
 export class PublicIntakeController {
   constructor(private readonly publicIntakeService: PublicIntakeService) {}
 
+  @Post("auth/anon-session")
+  createAnonSession(@Body() dto: { intakeToken: string }, @Req() req: Request) {
+    return this.publicIntakeService.createAnonSession(dto, {
+      ip: req.ip,
+      userAgent: Array.isArray(req.headers["user-agent"]) ? req.headers["user-agent"][0] : req.headers["user-agent"]
+    });
+  }
+
   @Post("auth/start-otp")
   startOtp(@Body() dto: StartIntakeOtpDto, @Req() req: Request) {
     return this.publicIntakeService.startOtp(dto, {

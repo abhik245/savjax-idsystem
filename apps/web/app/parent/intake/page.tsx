@@ -5,7 +5,8 @@ import { ChangeEvent, Suspense, useEffect, useMemo, useRef, useState } from "rea
 import AdvancedCamera, { type CaptureResult } from "@/components/camera/AdvancedCamera";
 import { useSearchParams } from "next/navigation";
 
-type Step = "auth" | "otp" | "details" | "photo" | "review" | "done";
+type Step = "details" | "photo" | "review" | "done";
+// ARCHIVED: type Step = "auth" | "otp" | "details" | "photo" | "review" | "done";
 type ActorType = "PARENT" | "STUDENT" | "STAFF";
 
 type PublicLinkMeta = {
@@ -180,18 +181,18 @@ function IntakePortalInner() {
   const search = useSearchParams();
   const tokenFromUrl = search?.get("token") || search?.get("intake_token") || "";
 
-  const [step, setStep] = useState<Step>("auth");
+  const [step, setStep] = useState<Step>("details");
   const [publicMeta, setPublicMeta] = useState<PublicLinkMeta | null>(null);
   const [sessionContext, setSessionContext] = useState<SessionContext | null>(null);
   const [sessionToken, setSessionToken] = useState("");
-  const [authSessionId, setAuthSessionId] = useState("");
+  // ARCHIVED: const [authSessionId, setAuthSessionId] = useState("");
   const [mobile, setMobile] = useState("");
-  const [otp, setOtp] = useState("");
+  // ARCHIVED: const [otp, setOtp] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loadingMeta, setLoadingMeta] = useState(true);
-  const [sendingOtp, setSendingOtp] = useState(false);
-  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  // ARCHIVED: const [sendingOtp, setSendingOtp] = useState(false);
+  // ARCHIVED: const [verifyingOtp, setVerifyingOtp] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -208,8 +209,8 @@ function IntakePortalInner() {
   const [rawPhotoUrl, setRawPhotoUrl] = useState("");
   const [showOriginalPhoto, setShowOriginalPhoto] = useState(false);
   const [showPhotoTips, setShowPhotoTips] = useState(true);
-  const [resendAt, setResendAt] = useState(0);
-  const [now, setNow] = useState(Date.now());
+  // ARCHIVED: const [resendAt, setResendAt] = useState(0);
+  // ARCHIVED: const [now, setNow] = useState(Date.now());
   const [draft, setDraft] = useState<IntakeDraft>({
     fullName: "",
     parentName: "",
@@ -260,8 +261,10 @@ function IntakePortalInner() {
   const showEmergencyNumber = Boolean(currentSchema.emergencyNumber);
   const showAadhaarNumber = Boolean(currentSchema.aadhaarNumber);
   const showRfid = Boolean(currentSchema.rfidRequired);
-  const verifiedMobile = sessionContext?.session.verifiedMobile || mobile;
-  const allowMobileEdit = Boolean(submissionModel.allowMobileEditAfterVerification);
+  // Anon sessions have "ANON" as verifiedMobile — fall back to the user-entered mobile from the form
+  const verifiedMobile = (sessionContext?.session.verifiedMobile === "ANON" ? "" : sessionContext?.session.verifiedMobile) || mobile;
+  const allowMobileEdit = true; // Always allow mobile edit in anon session mode
+  // ARCHIVED: const allowMobileEdit = Boolean(submissionModel.allowMobileEditAfterVerification);
   const configuredPhotoBackgroundPreference = (
     submissionModel.photoBgPreference ||
     sessionContext?.link.photoBgPreference ||
@@ -271,7 +274,8 @@ function IntakePortalInner() {
   const photoBackgroundPreference =
     configuredPhotoBackgroundPreference === "WHITE" ? "PLAIN" : configuredPhotoBackgroundPreference;
 
-  const progressSteps = useMemo<Step[]>(() => ["auth", "otp", "details", "photo", "review", "done"], []);
+  const progressSteps = useMemo<Step[]>(() => ["details", "photo", "review", "done"], []);
+  // ARCHIVED: const progressSteps = useMemo<Step[]>(() => ["auth", "otp", "details", "photo", "review", "done"], []);
   const progress = useMemo(() => {
     const index = Math.max(progressSteps.indexOf(step), 0);
     return ((index + 1) / progressSteps.length) * 100;
@@ -288,11 +292,12 @@ function IntakePortalInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenFromUrl]);
 
-  useEffect(() => {
-    if (resendAt <= Date.now()) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 500);
-    return () => window.clearInterval(timer);
-  }, [resendAt]);
+  // ARCHIVED: OTP resend timer — remove when OTP is re-enabled
+  // useEffect(() => {
+  //   if (resendAt <= Date.now()) return;
+  //   const timer = window.setInterval(() => setNow(Date.now()), 500);
+  //   return () => window.clearInterval(timer);
+  // }, [resendAt]);
 
   async function loadPublicEntry(token: string) {
     setLoadingMeta(true);
@@ -302,7 +307,21 @@ function IntakePortalInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "Invalid intake link");
       setPublicMeta(data as PublicLinkMeta);
-      setStep("auth");
+
+      // Create an anonymous session (no OTP) and load the session context directly
+      const anonRes = await fetch(`${apiBase}/intake-links/auth/anon-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intakeToken: (data as PublicLinkMeta).token })
+      });
+      const anonData = await anonRes.json();
+      if (!anonRes.ok) throw new Error(anonData.message || anonData.error || "Unable to start intake session");
+      const anonToken: string = anonData.intakeSessionToken;
+      setSessionToken(anonToken);
+      await loadSessionContext(anonToken);
+
+      // ARCHIVED: OTP flow — setStep("auth") replaced by anon session above
+      // setStep("auth");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load intake link");
     } finally {
@@ -310,71 +329,43 @@ function IntakePortalInner() {
     }
   }
 
-  async function sendOtp() {
-    if (!publicMeta?.token) {
-      setError("Intake link not available");
-      return;
-    }
-    const normalizedMobile = normalizeMobile(mobile);
-    if (!normalizedMobile) {
-      setError("Enter a valid 10-digit mobile number");
-      return;
-    }
+  // ARCHIVED: sendOtp — OTP layer removed; re-enable by restoring this function and the auth/otp steps
+  // async function sendOtp() {
+  //   if (!publicMeta?.token) { setError("Intake link not available"); return; }
+  //   const normalizedMobile = normalizeMobile(mobile);
+  //   if (!normalizedMobile) { setError("Enter a valid 10-digit mobile number"); return; }
+  //   setSendingOtp(true); setError(""); setStatus("");
+  //   try {
+  //     const res = await fetch(`${apiBase}/intake-links/auth/start-otp`, {
+  //       method: "POST", headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({ intakeToken: publicMeta.token, mobile: normalizedMobile })
+  //     });
+  //     const data = await res.json();
+  //     if (!res.ok) throw new Error(data.message || data.error || "OTP send failed");
+  //     setMobile(normalizedMobile); setAuthSessionId(data.authSessionId);
+  //     setResendAt(Date.now() + 30_000); setNow(Date.now()); setStep("otp");
+  //     setStatus(exposeDevOtp && data.devOtp ? `OTP sent. Dev OTP: ${data.devOtp}` : `OTP sent to ${data.maskedMobile || maskMobile(normalizedMobile)}`);
+  //   } catch (e) { setError(e instanceof Error ? e.message : "OTP send failed"); }
+  //   finally { setSendingOtp(false); }
+  // }
 
-    setSendingOtp(true);
-    setError("");
-    setStatus("");
-    try {
-      const res = await fetch(`${apiBase}/intake-links/auth/start-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intakeToken: publicMeta.token, mobile: normalizedMobile })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "OTP send failed");
-      setMobile(normalizedMobile);
-      setAuthSessionId(data.authSessionId);
-      setResendAt(Date.now() + 30_000);
-      setNow(Date.now());
-      setStep("otp");
-      setStatus(
-        exposeDevOtp && data.devOtp
-          ? `OTP sent. Dev OTP: ${data.devOtp}`
-          : `OTP sent to ${data.maskedMobile || maskMobile(normalizedMobile)}`
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "OTP send failed");
-    } finally {
-      setSendingOtp(false);
-    }
-  }
-
-  async function verifyOtp() {
-    if (!authSessionId) {
-      setError("Start mobile verification first");
-      return;
-    }
-
-    setVerifyingOtp(true);
-    setError("");
-    setStatus("");
-    try {
-      const res = await fetch(`${apiBase}/intake-links/auth/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ authSessionId, otp })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "OTP verification failed");
-      setSessionToken(data.intakeSessionToken);
-      await loadSessionContext(data.intakeSessionToken);
-      setStatus(`Mobile verified for ${data.maskedMobile || maskMobile(mobile)}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "OTP verify failed");
-    } finally {
-      setVerifyingOtp(false);
-    }
-  }
+  // ARCHIVED: verifyOtp — OTP layer removed; re-enable by restoring this function and the auth/otp steps
+  // async function verifyOtp() {
+  //   if (!authSessionId) { setError("Start mobile verification first"); return; }
+  //   setVerifyingOtp(true); setError(""); setStatus("");
+  //   try {
+  //     const res = await fetch(`${apiBase}/intake-links/auth/verify-otp`, {
+  //       method: "POST", headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({ authSessionId, otp })
+  //     });
+  //     const data = await res.json();
+  //     if (!res.ok) throw new Error(data.message || data.error || "OTP verification failed");
+  //     setSessionToken(data.intakeSessionToken);
+  //     await loadSessionContext(data.intakeSessionToken);
+  //     setStatus(`Mobile verified for ${data.maskedMobile || maskMobile(mobile)}`);
+  //   } catch (e) { setError(e instanceof Error ? e.message : "OTP verify failed"); }
+  //   finally { setVerifyingOtp(false); }
+  // }
 
   async function loadSessionContext(token: string) {
     setLoadingSession(true);
@@ -866,7 +857,7 @@ function IntakePortalInner() {
     setDraft({
       fullName: "",
       parentName: "",
-      mobile: sessionContext?.session.verifiedMobile || verifiedMobile,
+      mobile: verifiedMobile,
       className: fixedPrimaryValue || "",
       division: fixedSecondaryValue || "",
       rollNumber: "",
@@ -932,79 +923,56 @@ function IntakePortalInner() {
         {status ? <p className="text-xs text-emerald-300">{status}</p> : null}
         {error ? <p className="text-xs text-rose-300">{error}</p> : null}
 
+        {/* ARCHIVED: OTP auth steps — restore these sections to re-enable OTP
         {step === "auth" ? (
           <section className="glass rounded-2xl p-4">
             <p className="mb-1 text-sm font-semibold">Step 1: Mobile authentication</p>
-            <p className="mb-3 text-xs text-[var(--text-muted)]">
-              {publicMeta?.campaign?.message || getActorMessage(actorType)}
-            </p>
+            <p className="mb-3 text-xs text-[var(--text-muted)]">{publicMeta?.campaign?.message || getActorMessage(actorType)}</p>
             <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-              <input
-                value={mobile}
-                onChange={(event) => setMobile(event.target.value.replace(/\D/g, "").slice(0, 10))}
-                placeholder={getMobilePlaceholder(actorType)}
-                inputMode="numeric"
-                autoComplete="tel"
-                className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] px-3 py-2 text-sm outline-none"
-              />
-              <button
-                onClick={sendOtp}
-                disabled={sendingOtp}
-                className="rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-4 py-2 text-sm font-semibold disabled:opacity-60"
-              >
+              <input value={mobile} onChange={(e) => setMobile(e.target.value.replace(/\D/g,"").slice(0,10))}
+                placeholder={getMobilePlaceholder(actorType)} inputMode="numeric" autoComplete="tel"
+                className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] px-3 py-2 text-sm outline-none" />
+              <button onClick={sendOtp} disabled={sendingOtp}
+                className="rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-4 py-2 text-sm font-semibold disabled:opacity-60">
                 {sendingOtp ? "Sending..." : "Send OTP"}
               </button>
             </div>
           </section>
         ) : null}
-
         {step === "otp" ? (
           <section className="glass rounded-2xl p-4">
             <p className="mb-1 text-sm font-semibold">Step 2: Verify OTP</p>
-            <p className="mb-3 text-xs text-[var(--text-muted)]">
-              Enter the 6-digit OTP sent to {maskMobile(mobile)}.
-            </p>
+            <p className="mb-3 text-xs text-[var(--text-muted)]">Enter the 6-digit OTP sent to {maskMobile(mobile)}.</p>
             <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-              <input
-                value={otp}
-                onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="6-digit OTP"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] px-3 py-2 text-sm outline-none"
-              />
-              <button
-                onClick={verifyOtp}
-                disabled={verifyingOtp}
-                className="rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-4 py-2 text-sm font-semibold disabled:opacity-60"
-              >
+              <input value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g,"").slice(0,6))}
+                placeholder="6-digit OTP" inputMode="numeric" autoComplete="one-time-code"
+                className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] px-3 py-2 text-sm outline-none" />
+              <button onClick={verifyOtp} disabled={verifyingOtp}
+                className="rounded-xl bg-[linear-gradient(135deg,#0F3C78,#1C6ED5)] px-4 py-2 text-sm font-semibold disabled:opacity-60">
                 {verifyingOtp ? "Verifying..." : "Verify OTP"}
               </button>
             </div>
             <div className="mt-3 flex items-center justify-between text-xs text-[var(--text-muted)]">
               <span>OTP is required before the form can open.</span>
-              <button
-                type="button"
-                onClick={() => void sendOtp()}
-                disabled={sendingOtp || resendAt > now}
-                className="rounded-lg border border-[var(--line-soft)] px-3 py-1 disabled:opacity-50"
-              >
+              <button type="button" onClick={() => void sendOtp()} disabled={sendingOtp || resendAt > now}
+                className="rounded-lg border border-[var(--line-soft)] px-3 py-1 disabled:opacity-50">
                 {resendAt > now ? `Resend in ${Math.ceil((resendAt - now) / 1000)}s` : "Resend OTP"}
               </button>
             </div>
           </section>
         ) : null}
+        */}
 
         {loadingSession ? (
           <section className="glass rounded-2xl p-4">
-            <p className="text-sm text-[var(--text-muted)]">Loading verified intake session...</p>
+            <p className="text-sm text-[var(--text-muted)]">Opening intake form...</p>
           </section>
         ) : null}
 
         {step === "details" && sessionContext ? (
           <section className="glass rounded-2xl p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="m-0 text-sm font-semibold">Step 3: Intake form</p>
+              <p className="m-0 text-sm font-semibold">Step 1: Intake form</p>
               <div className="flex flex-wrap gap-2">
                 {showRfid ? <Badge text="RFID required" /> : null}
                 {submissionModel.workflowRequired ? <Badge text="Workflow enabled" /> : null}
