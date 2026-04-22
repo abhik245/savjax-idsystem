@@ -383,7 +383,7 @@ function IntakePortalInner() {
       setDraft({
         fullName: readDraftValue(ctx.draft, "fullName"),
         parentName: readDraftValue(ctx.draft, "parentName"),
-        mobile: readDraftValue(ctx.draft, "mobile") || ctx.session.verifiedMobile,
+        mobile: readDraftValue(ctx.draft, "mobile") || (ctx.session.verifiedMobile === "ANON" ? "" : ctx.session.verifiedMobile),
         className: readDraftValue(ctx.draft, "className") || readDraftValue(ctx.draft, "primaryValue") || fixedPrimaryValue,
         division:
           readDraftValue(ctx.draft, "division") ||
@@ -428,7 +428,7 @@ function IntakePortalInner() {
       issues.push("Parent name is required");
     }
     if (showMobile && !normalizeMobile(draft.mobile || verifiedMobile)) {
-      issues.push("Verified mobile number is required");
+      issues.push("Mobile number is required");
     }
     if (showAddress && !draft.address.trim()) {
       issues.push("Address is required");
@@ -1028,7 +1028,7 @@ function IntakePortalInner() {
                     onChange={(value) =>
                       setDraft((prev) => ({ ...prev, mobile: value.replace(/\D/g, "").slice(0, 10) }))
                     }
-                    placeholder="Verified mobile number"
+                    placeholder="Mobile number (10 digits)"
                   />
                 ) : (
                   <ReadonlyField label="Verified Mobile" value={draft.mobile || verifiedMobile} tone="verified" />
