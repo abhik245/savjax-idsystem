@@ -928,18 +928,14 @@ export default function SchoolDrillPage() {
     setLoading((prev) => ({ ...prev, photoExport: true }));
     setError("");
     try {
-      const query = new URLSearchParams();
-      if (studentQuery.trim()) query.set("q", studentQuery.trim());
-      if (studentStatus) query.set("status", studentStatus);
-      if (classFilter.trim()) query.set("className", classFilter.trim());
-
+      // No filters — always fetch every student photo for this school
       const exportData = await apiRequest<StudentExportResponse>(
-        `/admin/schools/${encodeURIComponent(schoolId)}/students/export${query.toString() ? `?${query.toString()}` : ""}`
+        `/admin/schools/${encodeURIComponent(schoolId)}/students/export`
       );
 
       const rows = exportData.rows.filter((r) => r.photoKey);
       if (!rows.length) {
-        setError("No photos found for these students.");
+        setError("No photos found for this school.");
         clearFlash();
         return;
       }
