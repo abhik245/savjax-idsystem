@@ -1,6 +1,5 @@
 "use client";
 
-import JSZip from "jszip";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -928,48 +927,27 @@ export default function SchoolDrillPage() {
     setLoading((prev) => ({ ...prev, photoExport: true }));
     setError("");
     try {
-      // No filters — always fetch every student photo for this school
-      const exportData = await apiRequest<StudentExportResponse>(
-        `/admin/schools/${encodeURIComponent(schoolId)}/students/export`
+      const res = await fetch(
+        `${apiOrigin}/api/v2/admin/schools/${encodeURIComponent(schoolId)}/students/photos-zip`,
+        { credentials: "include" }
       );
-
-      const rows = exportData.rows.filter((r) => r.photoKey);
-      if (!rows.length) {
-        setError("No photos found for this school.");
-        clearFlash();
-        return;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { message?: string }).message || `Server error ${res.status}`);
       }
-
-      const signedPhotoLinks = await getSignedPhotoLinkMap(rows.map((r) => String(r.photoKey ?? "")));
-
-      const zip = new JSZip();
-      await Promise.allSettled(
-        rows.map(async (row) => {
-          const photoKey = typeof row.photoKey === "string" ? row.photoKey.trim() : "";
-          const url = signedPhotoLinks.get(photoKey);
-          if (!url) return;
-          const fileName = buildStudentPhotoFileName(
-            typeof row.fullName === "string" ? row.fullName : "",
-            photoKey
-          );
-          const res = await fetch(url);
-          if (!res.ok) return;
-          const blob = await res.blob();
-          zip.file(fileName, blob);
-        })
-      );
-
-      const zipBlob = await zip.generateAsync({ type: "blob" });
-      const zipUrl = URL.createObjectURL(zipBlob);
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const nameMatch = disposition.match(/filename="([^"]+)"/);
+      const fileName = nameMatch ? nameMatch[1] : "school_photos.zip";
+      const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = zipUrl;
-      a.download = `${exportData.fileName.replace(/\.csv$/i, "")}_photos.zip`;
+      a.href = url;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(zipUrl);
-
-      setSuccess(`Photos downloaded (${zip.files ? Object.keys(zip.files).length : 0} files).`);
+      URL.revokeObjectURL(url);
+      setSuccess("Photos ZIP downloaded.");
       clearFlash();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to download photos");

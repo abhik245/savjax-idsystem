@@ -72,8 +72,10 @@ import { RequestReissueDto } from "./dto/request-reissue.dto";
 import { CreateReprintBatchDto } from "./dto/create-reprint-batch.dto";
 import { MarkPrintJobIssuedDto } from "./dto/mark-print-job-issued.dto";
 import { randomBytes } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
-import { join } from "path";
+import { createReadStream } from "fs";
+import { mkdir, stat, writeFile } from "fs/promises";
+import { join, resolve, sep, extname } from "path";
+import archiver from "archiver";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 type StudentQuery = { q?: string; status?: StudentStatus; className?: string; page?: number; pageSize?: number };
 type ReportQuery = {
@@ -762,6 +764,55 @@ export class AdminService {
       columns,
       rows: preparedRows.map((row) => row.prepared)
     };
+  }
+
+  async streamSchoolPhotosZip(actor: AuthenticatedUser, schoolId: string, res: import("express").Response) {
+    await this.assertSchoolAccess(actor, schoolId);
+
+    const school = await this.prisma.school.findFirst({
+      where: { id: schoolId, deletedAt: null },
+      select: { code: true, name: true }
+    });
+    if (!school) throw new NotFoundException("School not found");
+
+    const students = await this.prisma.student.findMany({
+      where: { schoolId, deletedAt: null, photoKey: { not: null } },
+      select: { fullName: true, photoKey: true },
+      orderBy: { createdAt: "asc" }
+    });
+
+    const uploadRoot = resolve(process.env.LOCAL_UPLOAD_DIR || join(process.cwd(), "uploads"));
+    const normalizedRoot = uploadRoot.endsWith(sep) ? uploadRoot : `${uploadRoot}${sep}`;
+    const zipName = `${(school.code || school.name || "school").replace(/[^a-zA-Z0-9_-]/g, "_")}_photos.zip`;
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
+    res.setHeader("Cache-Control", "private, no-store");
+
+    const archive = archiver("zip", { zlib: { level: 1 } });
+    archive.pipe(res);
+
+    for (const student of students) {
+      const photoKey = (student.photoKey || "").trim();
+      if (!photoKey.startsWith("local://")) continue;
+
+      const relativePath = photoKey.slice("local://".length).replace(/^\/+/, "");
+      const filePath = resolve(uploadRoot, relativePath);
+      if (filePath !== uploadRoot && !filePath.startsWith(normalizedRoot)) continue;
+
+      const ext = extname(filePath) || ".jpg";
+      const safeName = (student.fullName || "student").trim().replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ").replace(/\s+/g, " ");
+      const fileName = `${safeName}${ext}`;
+
+      try {
+        const info = await stat(filePath);
+        if (info.isFile()) archive.file(filePath, { name: fileName });
+      } catch {
+        // file missing — skip silently
+      }
+    }
+
+    await archive.finalize();
   }
 
   private buildSchoolStudentWhere(schoolId: string, query: StudentQuery): Prisma.StudentWhereInput {

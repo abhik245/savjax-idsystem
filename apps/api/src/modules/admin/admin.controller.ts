@@ -10,8 +10,10 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards
 } from "@nestjs/common";
+import type { Response } from "express";
 import {
   ApprovalWorkflowStatus,
   InstitutionType,
@@ -192,6 +194,27 @@ export class AdminController {
     @Query("className") className?: string
   ) {
     return this.adminService.exportSchoolStudents(req.user, schoolId, { q, status, className });
+  }
+
+  @Get("schools/:schoolId/students/photos-zip")
+  @UseGuards(TenantScopeGuard)
+  @TenantScope({ sources: [{ type: "param", key: "schoolId" }] })
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.COMPANY_ADMIN,
+    Role.OPERATIONS_ADMIN,
+    Role.SALES_PERSON,
+    Role.SALES,
+    Role.PRINTING,
+    Role.SCHOOL_ADMIN,
+    Role.SCHOOL_STAFF
+  )
+  streamSchoolPhotosZip(
+    @Req() req: AuthRequest,
+    @Param("schoolId") schoolId: string,
+    @Res() res: Response
+  ) {
+    return this.adminService.streamSchoolPhotosZip(req.user, schoolId, res);
   }
 
   @Get("schools/:schoolId/classes")
