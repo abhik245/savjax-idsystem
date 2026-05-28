@@ -75,7 +75,7 @@ import { randomBytes } from "crypto";
 import { createReadStream } from "fs";
 import { mkdir, stat, writeFile } from "fs/promises";
 import { join, resolve, sep, extname } from "path";
-import archiver from "archiver";
+import archiver = require("archiver");
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 type StudentQuery = { q?: string; status?: StudentStatus; className?: string; page?: number; pageSize?: number };
 type ReportQuery = {
