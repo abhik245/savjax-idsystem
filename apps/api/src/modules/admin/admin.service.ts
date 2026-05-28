@@ -767,6 +767,7 @@ export class AdminService {
   }
 
   async buildSchoolPhotosZip(actor: AuthenticatedUser, schoolId: string) {
+    try {
     await this.assertSchoolAccess(actor, schoolId);
 
     const school = await this.prisma.school.findFirst({
@@ -809,6 +810,10 @@ export class AdminService {
 
     void archive.finalize();
     return { stream: archive, zipName };
+    } catch (e) {
+      console.error("[photos-zip] REAL ERROR:", e);
+      throw e;
+    }
   }
 
   private buildSchoolStudentWhere(schoolId: string, query: StudentQuery): Prisma.StudentWhereInput {
