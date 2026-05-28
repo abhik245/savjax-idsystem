@@ -1,5 +1,6 @@
 "use client";
 
+import JSZip from "jszip";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -390,6 +391,7 @@ export default function SchoolDrillPage() {
     saveSchool: false,
     students: false,
     studentExport: false,
+    photoExport: false,
     classSummary: false,
     studentUpdate: "",
     campaigns: false,
@@ -922,6 +924,65 @@ export default function SchoolDrillPage() {
     }
   }
 
+  async function downloadAllPhotos() {
+    setLoading((prev) => ({ ...prev, photoExport: true }));
+    setError("");
+    try {
+      const query = new URLSearchParams();
+      if (studentQuery.trim()) query.set("q", studentQuery.trim());
+      if (studentStatus) query.set("status", studentStatus);
+      if (classFilter.trim()) query.set("className", classFilter.trim());
+
+      const exportData = await apiRequest<StudentExportResponse>(
+        `/admin/schools/${encodeURIComponent(schoolId)}/students/export${query.toString() ? `?${query.toString()}` : ""}`
+      );
+
+      const rows = exportData.rows.filter((r) => r.photoKey);
+      if (!rows.length) {
+        setError("No photos found for these students.");
+        clearFlash();
+        return;
+      }
+
+      const signedPhotoLinks = await getSignedPhotoLinkMap(rows.map((r) => String(r.photoKey ?? "")));
+
+      const zip = new JSZip();
+      await Promise.allSettled(
+        rows.map(async (row) => {
+          const photoKey = typeof row.photoKey === "string" ? row.photoKey.trim() : "";
+          const url = signedPhotoLinks.get(photoKey);
+          if (!url) return;
+          const fileName = buildStudentPhotoFileName(
+            typeof row.fullName === "string" ? row.fullName : "",
+            photoKey
+          );
+          const res = await fetch(url);
+          if (!res.ok) return;
+          const blob = await res.blob();
+          zip.file(fileName, blob);
+        })
+      );
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const zipUrl = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = zipUrl;
+      a.download = `${exportData.fileName.replace(/\.csv$/i, "")}_photos.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(zipUrl);
+
+      setSuccess(`Photos downloaded (${zip.files ? Object.keys(zip.files).length : 0} files).`);
+      clearFlash();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to download photos");
+      clearFlash();
+    } finally {
+      setLoading((prev) => ({ ...prev, photoExport: false }));
+    }
+  }
+
   if (booting || loading.detail) {
     return <SchoolLoader />;
   }
@@ -1220,6 +1281,16 @@ export default function SchoolDrillPage() {
                   >
                     <span className="inline-flex items-center gap-1">
                       <Download size={12} /> {loading.studentExport ? "Preparing..." : "CSV"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void downloadAllPhotos()}
+                    disabled={loading.photoExport}
+                    className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/20 transition disabled:opacity-50"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <Download size={12} /> {loading.photoExport ? "Zipping..." : "Photos ZIP"}
                     </span>
                   </button>
                 </div>
@@ -2237,6 +2308,24 @@ function StudentDetailModal({
   const classLabel = [student.className, student.section].filter(Boolean).join(" – ") || "—";
   const parentLabel = [student.parentName, student.parentMobile].filter(Boolean).join(" • ") || "—";
 
+  async function handleDownloadPhoto() {
+    if (!student.photoLink) return;
+    try {
+      const res = await fetch(student.photoLink);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${student.fullName.replace(/\s+/g, "_")}_photo.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      window.open(student.photoLink, "_blank");
+    }
+  }
+
   return (
     /* Overlay */
     <div
@@ -2309,14 +2398,23 @@ function StudentDetailModal({
 
             {/* Photo link */}
             {student.photoLink && (
-              <a
-                href={student.photoLink}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-[11px] font-medium text-sky-300 hover:bg-sky-500/20 transition"
-              >
-                <Link2 size={11} /> Open full-size photo
-              </a>
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={student.photoLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-[11px] font-medium text-sky-300 hover:bg-sky-500/20 transition"
+                >
+                  <Link2 size={11} /> Open full-size photo
+                </a>
+                <button
+                  type="button"
+                  onClick={handleDownloadPhoto}
+                  className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 transition"
+                >
+                  <Download size={11} /> Download photo
+                </button>
+              </div>
             )}
 
             {/* Status update */}
