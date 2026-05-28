@@ -776,7 +776,7 @@ export class AdminService {
     if (!school) throw new NotFoundException("School not found");
 
     const students = await this.prisma.student.findMany({
-      where: { schoolId, deletedAt: null, photoKey: { not: null } },
+      where: { schoolId, deletedAt: null, photoKey: { not: "" } },
       select: { fullName: true, photoKey: true },
       orderBy: { createdAt: "asc" }
     });
