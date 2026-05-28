@@ -766,7 +766,7 @@ export class AdminService {
     };
   }
 
-  async streamSchoolPhotosZip(actor: AuthenticatedUser, schoolId: string, res: import("express").Response) {
+  async buildSchoolPhotosZip(actor: AuthenticatedUser, schoolId: string) {
     await this.assertSchoolAccess(actor, schoolId);
 
     const school = await this.prisma.school.findFirst({
@@ -785,12 +785,7 @@ export class AdminService {
     const normalizedRoot = uploadRoot.endsWith(sep) ? uploadRoot : `${uploadRoot}${sep}`;
     const zipName = `${(school.code || school.name || "school").replace(/[^a-zA-Z0-9_-]/g, "_")}_photos.zip`;
 
-    res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
-    res.setHeader("Cache-Control", "private, no-store");
-
     const archive = archiver("zip", { zlib: { level: 1 } });
-    archive.pipe(res);
 
     for (const student of students) {
       const photoKey = (student.photoKey || "").trim();
@@ -808,11 +803,12 @@ export class AdminService {
         const info = await stat(filePath);
         if (info.isFile()) archive.file(filePath, { name: fileName });
       } catch {
-        // file missing — skip silently
+        // file missing on disk — skip
       }
     }
 
-    await archive.finalize();
+    void archive.finalize();
+    return { stream: archive, zipName };
   }
 
   private buildSchoolStudentWhere(schoolId: string, query: StudentQuery): Prisma.StudentWhereInput {

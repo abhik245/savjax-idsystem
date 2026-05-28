@@ -11,6 +11,7 @@ import {
   Query,
   Req,
   Res,
+  StreamableFile,
   UseGuards
 } from "@nestjs/common";
 import type { Response } from "express";
@@ -209,12 +210,18 @@ export class AdminController {
     Role.SCHOOL_ADMIN,
     Role.SCHOOL_STAFF
   )
-  streamSchoolPhotosZip(
+  async streamSchoolPhotosZip(
     @Req() req: AuthRequest,
     @Param("schoolId") schoolId: string,
-    @Res() res: Response
+    @Res({ passthrough: true }) res: Response
   ) {
-    return this.adminService.streamSchoolPhotosZip(req.user, schoolId, res);
+    const { stream, zipName } = await this.adminService.buildSchoolPhotosZip(req.user, schoolId);
+    res.set({
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${zipName}"`,
+      "Cache-Control": "private, no-store"
+    });
+    return new StreamableFile(stream);
   }
 
   @Get("schools/:schoolId/classes")
