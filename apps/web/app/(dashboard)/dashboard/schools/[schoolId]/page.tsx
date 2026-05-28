@@ -923,38 +923,9 @@ export default function SchoolDrillPage() {
     }
   }
 
-  async function downloadAllPhotos() {
-    setLoading((prev) => ({ ...prev, photoExport: true }));
-    setError("");
-    try {
-      const res = await fetch(
-        `${apiOrigin}/api/v2/admin/schools/${encodeURIComponent(schoolId)}/students/photos-zip`,
-        { credentials: "include" }
-      );
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { message?: string }).message || `Server error ${res.status}`);
-      }
-      const blob = await res.blob();
-      const disposition = res.headers.get("Content-Disposition") || "";
-      const nameMatch = disposition.match(/filename="([^"]+)"/);
-      const fileName = nameMatch ? nameMatch[1] : "school_photos.zip";
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setSuccess("Photos ZIP downloaded.");
-      clearFlash();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to download photos");
-      clearFlash();
-    } finally {
-      setLoading((prev) => ({ ...prev, photoExport: false }));
-    }
+  function downloadAllPhotos() {
+    const url = `${apiOrigin}/api/v2/admin/schools/${encodeURIComponent(schoolId)}/students/photos-zip`;
+    window.location.href = url;
   }
 
   if (booting || loading.detail) {
@@ -1259,12 +1230,11 @@ export default function SchoolDrillPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void downloadAllPhotos()}
-                    disabled={loading.photoExport}
-                    className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/20 transition disabled:opacity-50"
+                    onClick={downloadAllPhotos}
+                    className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/20 transition"
                   >
                     <span className="inline-flex items-center gap-1">
-                      <Download size={12} /> {loading.photoExport ? "Zipping..." : "Photos ZIP"}
+                      <Download size={12} /> Photos ZIP
                     </span>
                   </button>
                 </div>
