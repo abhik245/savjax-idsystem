@@ -932,7 +932,12 @@ export class PublicIntakeService {
       emergencyNumber: this.readBoolean(record, "emergencyNumber"),
       fullAddress: this.readBoolean(record, "fullAddress", this.readBoolean(record, "address")),
       aadhaarNumber: this.readBoolean(record, "aadhaarNumber"),
-      rfidRequired: this.readBoolean(record, "rfidRequired")
+      rfidRequired: this.readBoolean(record, "rfidRequired"),
+      employeeId: this.readBoolean(record, "employeeId"),
+      designation: this.readBoolean(record, "designation"),
+      department: this.readBoolean(record, "department"),
+      education: this.readBoolean(record, "education"),
+      joiningDate: this.readBoolean(record, "joiningDate")
     };
   }
 
