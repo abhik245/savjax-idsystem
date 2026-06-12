@@ -96,6 +96,27 @@ export class CreateIntakeCampaignDataSchemaDto {
   @IsOptional()
   @IsBoolean()
   rfidRequired?: boolean;
+
+  // Staff-specific schema fields
+  @IsOptional()
+  @IsBoolean()
+  employeeId?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  designation?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  department?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  education?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  joiningDate?: boolean;
 }
 
 export class CreateIntakeCampaignSubmissionModelDto {

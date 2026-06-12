@@ -594,7 +594,12 @@ export class SchoolsService {
       fullAddress,
       address: fullAddress,
       aadhaarNumber: schema.aadhaarNumber ?? false,
-      rfidRequired: schema.rfidRequired ?? false
+      rfidRequired: schema.rfidRequired ?? false,
+      employeeId: schema.employeeId ?? false,
+      designation: schema.designation ?? false,
+      department: schema.department ?? false,
+      education: schema.education ?? false,
+      joiningDate: schema.joiningDate ?? false
     };
 
     const submissionDefaults = descriptor.submissionDefaults;
