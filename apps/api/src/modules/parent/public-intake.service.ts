@@ -493,9 +493,138 @@ export class PublicIntakeService {
 
     await this.assertDuplicatePolicy(link, session, fullName, primaryValue || "", secondaryValue || "");
 
+    const isStaff = actorType === IntakeActorType.STAFF;
     const className = (primaryValue || "GENERAL").toUpperCase();
     const section = (secondaryValue || "GENERAL").toUpperCase();
     const duplicateKey = [fullName.toLowerCase(), className, section, verifiedMobile.toLowerCase()].join("|");
+
+    // Staff submission path
+    if (isStaff) {
+      const existingStaff = await this.prisma.staffMember.findFirst({
+        where: { intakeLinkId: link.id, duplicateKey, deletedAt: null },
+        select: { id: true, status: true, intakeStage: true }
+      });
+      if (existingStaff && existingStaff.status !== StudentStatus.REJECTED && existingStaff.intakeStage !== IntakeSubmissionStage.REJECTED) {
+        throw new ConflictException("This staff record has already been submitted");
+      }
+      const capacity = this.segmentCapacity(link);
+      if (capacity && !existingStaff) {
+        const count = await this.prisma.staffMember.count({ where: { intakeLinkId: link.id, deletedAt: null } });
+        if (count >= capacity) throw new BadRequestException("This intake link has reached its submission capacity");
+      }
+      const photo =
+        (dto.photoAnalysisId
+          ? this.faceIntelligenceService.consumePublicAnalysisTicket({
+              ticketId: dto.photoAnalysisId,
+              schoolId: link.schoolId,
+              intakeToken: link.token,
+              sessionId: session.id
+            })
+          : null) ||
+        (await this.faceIntelligenceService.processPhoto({
+          photoDataUrl: dto.photoDataUrl,
+          photoKey: dto.photoKey,
+          schoolId: link.schoolId,
+          intakeToken: link.token,
+          photoBgPreference: link.photoBgPreference,
+          preferredPhotoName: this.normalizeString(dto.preferredPhotoName) || fullName
+        }));
+      const workflowRequired =
+        submissionModel.workflowRequired ||
+        this.readBoolean(this.asRecord(link.campaign?.approvalRulesJson), "approvalRequired", true);
+      const nextStage = workflowRequired ? IntakeSubmissionStage.UNDER_REVIEW : IntakeSubmissionStage.SUBMITTED;
+      const staffData = {
+        schoolId: link.schoolId,
+        intakeLinkId: link.id,
+        fullName,
+        mobile: this.dataProtectionService.maskPhone(verifiedMobile) || verifiedMobile,
+        mobileCiphertext: this.dataProtectionService.encryptText(verifiedMobile),
+        employeeId: this.normalizeString(dto.employeeId) || null,
+        designation: this.normalizeString(dto.designation) || null,
+        department: this.normalizeString(dto.department) || null,
+        education: this.normalizeString(dto.education) || null,
+        joiningDate: this.normalizeString(dto.joiningDate) || null,
+        dob: dob || null,
+        bloodGroup: bloodGroup || null,
+        address: this.dataProtectionService.maskAddress(address) || address,
+        addressCiphertext: this.dataProtectionService.encryptText(address),
+        emergencyNumber: emergencyNumber || null,
+        aadhaarNumber: aadhaarNumber || null,
+        photoKey: photo.photoKey,
+        status: StudentStatus.SUBMITTED,
+        intakeStage: nextStage,
+        duplicateKey,
+        duplicateFlag: false,
+        rejectionNote: null as string | null,
+        correctedAt: existingStaff ? new Date() : null,
+        photoQualityStatus: photo.photoQualityStatus,
+        photoQualityScore: photo.photoQualityScore,
+        photoAnalysisJson: photo.photoAnalysisJson as Prisma.InputJsonValue
+      };
+      const staffMember = existingStaff
+        ? await this.prisma.staffMember.update({ where: { id: existingStaff.id }, data: staffData })
+        : await this.prisma.staffMember.create({ data: staffData });
+      const staffPayloadJson = {
+        intakeToken: link.token,
+        fullName,
+        verifiedMobile,
+        submittedMobile: visibleMobile || null,
+        employeeId: dto.employeeId || null,
+        designation: dto.designation || null,
+        department: dto.department || null,
+        education: dto.education || null,
+        joiningDate: dto.joiningDate || null,
+        address: address || null,
+        dob,
+        bloodGroup,
+        emergencyNumber,
+        aadhaarNumber,
+        campaignName: link.campaignName,
+        institutionType: link.institutionType,
+        audience: link.audience,
+        actorType,
+        submissionMode: submissionModel.mode,
+        stage: nextStage
+      };
+      await this.prisma.parentSubmission.create({
+        data: {
+          schoolId: link.schoolId,
+          studentId: null,
+          verifiedMobile,
+          otpVerifiedAt: session.verifiedAt,
+          authSessionId: session.id,
+          actorType,
+          sessionStatus: IntakeSessionStatus.SUBMITTED,
+          submittedAt: new Date(),
+          payloadJson: staffPayloadJson as Prisma.InputJsonValue,
+          payloadCiphertext: this.dataProtectionService.encryptJson(staffPayloadJson)
+        }
+      });
+      await this.prisma.intakeAuthSession.update({
+        where: { id: session.id },
+        data: { sessionStatus: IntakeSessionStatus.SUBMITTED, draftPayloadJson: Prisma.JsonNull }
+      });
+      await this.auditSession(session.id, "SUBMISSION_CREATED", context, {
+        staffMemberId: staffMember.id,
+        intakeStage: nextStage,
+        actorType
+      });
+      return {
+        staff: {
+          id: staffMember.id,
+          fullName: staffMember.fullName,
+          designation: staffMember.designation,
+          department: staffMember.department,
+          status: staffMember.status,
+          intakeStage: staffMember.intakeStage
+        },
+        proof: null,
+        photoAnalysis: { status: photo.photoQualityStatus, score: photo.photoQualityScore },
+        submission: { status: staffMember.status, stage: staffMember.intakeStage, verifiedMobile, actorType }
+      };
+    }
+
+    // Student / parent submission path
     const existing = await this.prisma.student.findFirst({
       where: this.buildStudentDuplicateWhere(link, duplicateKey),
       select: { id: true, status: true, intakeStage: true, rollNumber: true }

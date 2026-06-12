@@ -60,6 +60,7 @@ enum IntakeAudience {
   PARENT
   STUDENT
   EMPLOYEE
+  STAFF
 }
 
 enum IntakeActorType {
@@ -327,6 +328,7 @@ model School {
   approvalChains      ApprovalChain[]
   approvalWorkflows   ApprovalWorkflow[]
   students            Student[]
+  staffMembers        StaffMember[]
   orders              Order[]
   proofs              Proof[]
   printJobs           PrintJob[]
@@ -410,6 +412,44 @@ model Student {
   deletedAt          DateTime?
 
   @@index([schoolId, createdAt])
+}
+
+model StaffMember {
+  id                   String                @id @default(cuid())
+  schoolId             String
+  school               School                @relation(fields: [schoolId], references: [id])
+  intakeLinkId         String?
+  intakeLink           IntakeLink?           @relation(fields: [intakeLinkId], references: [id])
+  fullName             String
+  mobile               String?
+  mobileCiphertext     String?
+  employeeId           String?
+  designation          String?
+  department           String?
+  education            String?
+  joiningDate          String?
+  dob                  String?
+  bloodGroup           String?
+  address              String?
+  addressCiphertext    String?
+  emergencyNumber      String?
+  aadhaarNumber        String?
+  photoKey             String
+  status               StudentStatus         @default(SUBMITTED)
+  intakeStage          IntakeSubmissionStage @default(SUBMITTED)
+  photoQualityStatus   PhotoQualityStatus    @default(NOT_CHECKED)
+  photoQualityScore    Float?
+  photoAnalysisJson    Json?
+  duplicateKey         String?
+  duplicateFlag        Boolean               @default(false)
+  rejectionNote        String?
+  correctedAt          DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  deletedAt            DateTime?
+
+  @@index([schoolId, createdAt])
+  @@index([intakeLinkId])
 }
 
 model ParentSubmission {
@@ -699,6 +739,7 @@ model IntakeLink {
   isActive             Boolean              @default(true)
   expiresAt            DateTime
   students             Student[]
+  staffMembers         StaffMember[]
   authSessions         IntakeAuthSession[]
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt

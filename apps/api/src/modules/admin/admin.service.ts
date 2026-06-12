@@ -825,6 +825,135 @@ export class AdminService {
     return where;
   }
 
+  async listSchoolStaff(actor: AuthenticatedUser, schoolId: string, query: StudentQuery) {
+    await this.assertSchoolAccess(actor, schoolId);
+    const page = Math.max(Number(query.page || 1), 1);
+    const pageSize = Math.min(Math.max(Number(query.pageSize || 20), 1), 200);
+    const where: Prisma.StaffMemberWhereInput = { schoolId, deletedAt: null };
+    if (query.status) where.status = query.status;
+    if (query.q?.trim()) {
+      const text = query.q.trim();
+      where.OR = [
+        { fullName: { contains: text, mode: "insensitive" } },
+        { designation: { contains: text, mode: "insensitive" } },
+        { department: { contains: text, mode: "insensitive" } },
+        { employeeId: { contains: text, mode: "insensitive" } }
+      ];
+    }
+    const [total, rows] = await Promise.all([
+      this.prisma.staffMember.count({ where }),
+      this.prisma.staffMember.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          fullName: true,
+          employeeId: true,
+          designation: true,
+          department: true,
+          education: true,
+          joiningDate: true,
+          mobile: true,
+          bloodGroup: true,
+          dob: true,
+          photoKey: true,
+          status: true,
+          intakeStage: true,
+          duplicateFlag: true,
+          createdAt: true
+        }
+      })
+    ]);
+    return { page, pageSize, total, rows };
+  }
+
+  async exportSchoolStaff(actor: AuthenticatedUser, schoolId: string, query: StudentQuery) {
+    await this.assertSchoolAccess(actor, schoolId);
+    const school = await this.prisma.school.findFirst({ where: { id: schoolId, deletedAt: null }, select: { code: true, name: true } });
+    if (!school) throw new NotFoundException("School not found");
+    const where: Prisma.StaffMemberWhereInput = { schoolId, deletedAt: null };
+    if (query.status) where.status = query.status;
+    if (query.q?.trim()) {
+      const text = query.q.trim();
+      where.OR = [
+        { fullName: { contains: text, mode: "insensitive" } },
+        { designation: { contains: text, mode: "insensitive" } },
+        { department: { contains: text, mode: "insensitive" } }
+      ];
+    }
+    const rows = await this.prisma.staffMember.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        fullName: true,
+        employeeId: true,
+        designation: true,
+        department: true,
+        education: true,
+        joiningDate: true,
+        mobile: true,
+        dob: true,
+        bloodGroup: true,
+        address: true,
+        emergencyNumber: true,
+        photoKey: true,
+        status: true,
+        intakeStage: true,
+        createdAt: true
+      }
+    });
+    const columns = [
+      { key: "staffId", label: "Staff ID" },
+      { key: "fullName", label: "Full Name" },
+      { key: "employeeId", label: "Employee ID" },
+      { key: "designation", label: "Designation" },
+      { key: "department", label: "Department" },
+      { key: "education", label: "Education" },
+      { key: "joiningDate", label: "Joining Date" },
+      { key: "dob", label: "DOB" },
+      { key: "bloodGroup", label: "Blood Group" },
+      { key: "mobile", label: "Mobile" },
+      { key: "emergencyNumber", label: "Emergency Number" },
+      { key: "address", label: "Address" },
+      { key: "status", label: "Status" },
+      { key: "intakeStage", label: "Intake Stage" },
+      { key: "submittedAt", label: "Submitted At" },
+      { key: "photoKey", label: "Photo Key" }
+    ];
+    return {
+      fileName: `${school.code || school.name}-staff-export`,
+      columns,
+      rows: rows.map((r) => ({
+        staffId: r.id,
+        fullName: r.fullName,
+        employeeId: r.employeeId || "",
+        designation: r.designation || "",
+        department: r.department || "",
+        education: r.education || "",
+        joiningDate: r.joiningDate || "",
+        dob: r.dob || "",
+        bloodGroup: r.bloodGroup || "",
+        mobile: r.mobile || "",
+        emergencyNumber: r.emergencyNumber || "",
+        address: r.address || "",
+        status: r.status,
+        intakeStage: r.intakeStage,
+        submittedAt: r.createdAt.toISOString(),
+        photoKey: r.photoKey || ""
+      }))
+    };
+  }
+
+  async updateStaffMember(actor: AuthenticatedUser, staffId: string, status: StudentStatus) {
+    const staff = await this.prisma.staffMember.findFirst({ where: { id: staffId, deletedAt: null }, select: { id: true, schoolId: true } });
+    if (!staff) throw new NotFoundException("Staff member not found");
+    await this.assertSchoolAccess(actor, staff.schoolId);
+    return this.prisma.staffMember.update({ where: { id: staffId }, data: { status } });
+  }
+
   async listSchoolClassSummary(actor: AuthenticatedUser, schoolId: string) {
     await this.assertSchoolAccess(actor, schoolId);
     const grouped = await this.prisma.student.groupBy({

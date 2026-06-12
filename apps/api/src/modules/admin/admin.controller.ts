@@ -241,6 +241,72 @@ export class AdminController {
     return this.adminService.listSchoolClassSummary(req.user, schoolId);
   }
 
+  @Get("schools/:schoolId/staff")
+  @UseGuards(TenantScopeGuard)
+  @TenantScope({ sources: [{ type: "param", key: "schoolId" }] })
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.COMPANY_ADMIN,
+    Role.OPERATIONS_ADMIN,
+    Role.SALES_PERSON,
+    Role.SALES,
+    Role.PRINTING,
+    Role.SCHOOL_ADMIN,
+    Role.SCHOOL_STAFF
+  )
+  listSchoolStaff(
+    @Req() req: AuthRequest,
+    @Param("schoolId") schoolId: string,
+    @Query("q") q?: string,
+    @Query("status", new ParseEnumPipe(StudentStatus, { optional: true })) status?: StudentStatus,
+    @Query("page") page?: number,
+    @Query("pageSize") pageSize?: number
+  ) {
+    return this.adminService.listSchoolStaff(req.user, schoolId, { q, status, page, pageSize });
+  }
+
+  @Get("schools/:schoolId/staff/export")
+  @UseGuards(TenantScopeGuard)
+  @TenantScope({ sources: [{ type: "param", key: "schoolId" }] })
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.COMPANY_ADMIN,
+    Role.OPERATIONS_ADMIN,
+    Role.SALES_PERSON,
+    Role.SALES,
+    Role.PRINTING,
+    Role.SCHOOL_ADMIN,
+    Role.SCHOOL_STAFF
+  )
+  exportSchoolStaff(
+    @Req() req: AuthRequest,
+    @Param("schoolId") schoolId: string,
+    @Query("q") q?: string,
+    @Query("status", new ParseEnumPipe(StudentStatus, { optional: true })) status?: StudentStatus
+  ) {
+    return this.adminService.exportSchoolStaff(req.user, schoolId, { q, status });
+  }
+
+  @Patch("staff/:staffId")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.COMPANY_ADMIN,
+    Role.OPERATIONS_ADMIN,
+    Role.SALES_PERSON,
+    Role.SALES,
+    Role.SCHOOL_ADMIN,
+    Role.SCHOOL_STAFF
+  )
+  updateStaffMember(
+    @Req() req: AuthRequest,
+    @Param("staffId") staffId: string,
+    @Body("status", new ParseEnumPipe(StudentStatus, { optional: true })) status?: StudentStatus
+  ) {
+    if (!status) return { message: "No changes" };
+    return this.adminService.updateStaffMember(req.user, staffId, status);
+  }
+
   @Get("schools/:schoolId/audit-logs")
   @UseGuards(TenantScopeGuard)
   @TenantScope({ sources: [{ type: "param", key: "schoolId" }] })

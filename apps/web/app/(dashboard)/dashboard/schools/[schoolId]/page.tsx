@@ -35,7 +35,7 @@ type RoleKey =
 
 type SchoolStatus = "ACTIVE" | "INACTIVE";
 type InstitutionType = "SCHOOL" | "COLLEGE" | "COMPANY" | "COACHING_INSTITUTE";
-type IntakeAudience = "PARENT" | "STUDENT" | "EMPLOYEE";
+type IntakeAudience = "PARENT" | "STUDENT" | "EMPLOYEE" | "STAFF";
 type StudentStatus =
   | "DRAFT"
   | "SUBMITTED"
@@ -46,7 +46,33 @@ type StudentStatus =
   | "DELIVERED"
   | "REJECTED";
 
-type TabKey = "overview" | "students" | "campaigns" | "invoices" | "audit";
+type TabKey = "overview" | "students" | "staff" | "campaigns" | "invoices" | "audit";
+
+type StaffMemberRow = {
+  id: string;
+  fullName: string;
+  employeeId?: string | null;
+  designation?: string | null;
+  department?: string | null;
+  education?: string | null;
+  joiningDate?: string | null;
+  mobile?: string | null;
+  bloodGroup?: string | null;
+  dob?: string | null;
+  photoKey?: string | null;
+  photoLink?: string | null;
+  status: StudentStatus;
+  intakeStage?: string | null;
+  duplicateFlag?: boolean | null;
+  createdAt: string;
+};
+
+type SchoolStaffListResponse = {
+  page: number;
+  pageSize: number;
+  total: number;
+  rows: StaffMemberRow[];
+};
 
 type SchoolDetailStudent = {
   id: string;
@@ -259,12 +285,14 @@ type AuditRow = {
 type CampaignForm = {
   campaignName: string;
   institutionType: InstitutionType;
+  folderType: "STUDENT" | "STAFF";
   maxExpectedVolume: string;
   startsAt: string;
   expiresAt: string;
   dataSchema: {
     fullName: boolean;
     photo: boolean;
+    // student fields
     className: boolean;
     division: boolean;
     rollNumber: boolean;
@@ -275,6 +303,12 @@ type CampaignForm = {
     emergencyNumber: boolean;
     fullAddress: boolean;
     aadhaarNumber: boolean;
+    // staff fields
+    employeeId: boolean;
+    designation: boolean;
+    department: boolean;
+    education: boolean;
+    joiningDate: boolean;
   };
   submissionModel: {
     mode: string;
@@ -296,6 +330,7 @@ type CampaignForm = {
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" },
   { key: "students", label: "Students" },
+  { key: "staff", label: "Staff" },
   { key: "campaigns", label: "Intake Campaigns" },
   { key: "invoices", label: "Invoices" },
   { key: "audit", label: "Audit" }
@@ -324,6 +359,25 @@ const DATA_SCHEMA_FIELDS: Array<{
   { key: "dob", label: "DOB" },
   { key: "bloodGroup", label: "Blood Group" },
   { key: "parentName", label: "Parent Name" },
+  { key: "mobileNumber", label: "Mobile Number" },
+  { key: "emergencyNumber", label: "Emergency Number" },
+  { key: "fullAddress", label: "Full Address" },
+  { key: "aadhaarNumber", label: "Aadhaar Number" }
+];
+
+const STAFF_SCHEMA_FIELDS: Array<{
+  key: keyof CampaignForm["dataSchema"];
+  label: string;
+  locked?: boolean;
+}> = [
+  { key: "fullName", label: "Full Name", locked: true },
+  { key: "employeeId", label: "Employee ID" },
+  { key: "designation", label: "Designation" },
+  { key: "department", label: "Department" },
+  { key: "education", label: "Education Qualification" },
+  { key: "joiningDate", label: "Date of Joining" },
+  { key: "dob", label: "Date of Birth" },
+  { key: "bloodGroup", label: "Blood Group" },
   { key: "mobileNumber", label: "Mobile Number" },
   { key: "emergencyNumber", label: "Emergency Number" },
   { key: "fullAddress", label: "Full Address" },
@@ -371,6 +425,11 @@ export default function SchoolDrillPage() {
   const [studentsPage, setStudentsPage] = useState(1);
   const [selectedStudent, setSelectedStudent] = useState<SchoolDetailStudent | null>(null);
 
+  const [staff, setStaff] = useState<SchoolStaffListResponse | null>(null);
+  const [staffQuery, setStaffQuery] = useState("");
+  const [staffStatus, setStaffStatus] = useState<StudentStatus | "">("");
+  const [staffPage, setStaffPage] = useState(1);
+
   const [campaigns, setCampaigns] = useState<IntakeCampaignRow[]>([]);
   const [campaignForm, setCampaignForm] = useState<CampaignForm>(() => buildCampaignForm("SCHOOL"));
   const [campaignStep, setCampaignStep] = useState<1 | 2>(1);
@@ -393,6 +452,9 @@ export default function SchoolDrillPage() {
     photoExport: false,
     classSummary: false,
     studentUpdate: "",
+    staff: false,
+    staffExport: false,
+    staffUpdate: "",
     campaigns: false,
     campaignCreate: false,
     invoices: false,
@@ -434,8 +496,9 @@ export default function SchoolDrillPage() {
   useEffect(() => {
     if (!schoolId || booting) return;
     if (tab === "students") void loadStudents(studentsPage);
+    if (tab === "staff") void loadStaff(staffPage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studentsPage, studentStatus, classFilter, tab]);
+  }, [studentsPage, studentStatus, classFilter, staffPage, staffStatus, tab]);
 
   useEffect(() => {
     setStudentsPage(1);
@@ -567,7 +630,7 @@ export default function SchoolDrillPage() {
     });
     setCampaignForm((prev) =>
       !prev.campaignName
-        ? buildCampaignForm((res.school.institutionType || "SCHOOL") as InstitutionType, res.school.name)
+        ? buildCampaignForm((res.school.institutionType || "SCHOOL") as InstitutionType, res.school.name, prev.folderType || "STUDENT")
         : prev
     );
   }
@@ -662,6 +725,77 @@ export default function SchoolDrillPage() {
     }
   }
 
+  async function loadStaff(page = 1) {
+    setLoading((p) => ({ ...p, staff: true }));
+    try {
+      const q = new URLSearchParams();
+      q.set("page", String(page));
+      q.set("pageSize", "20");
+      if (staffQuery.trim()) q.set("q", staffQuery.trim());
+      if (staffStatus) q.set("status", staffStatus);
+      const res = await apiRequest<SchoolStaffListResponse>(
+        `/admin/schools/${encodeURIComponent(schoolId)}/staff?${q.toString()}`
+      );
+      const signedPhotoLinks = await getSignedPhotoLinkMap(res.rows.map((row) => row.photoKey));
+      setStaff({
+        ...res,
+        rows: res.rows.map((row) => {
+          const photoKey = typeof row.photoKey === "string" ? row.photoKey.trim() : "";
+          return { ...row, photoLink: photoKey ? signedPhotoLinks.get(photoKey) || "" : "" };
+        })
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load staff");
+      clearFlash();
+    } finally {
+      setLoading((p) => ({ ...p, staff: false }));
+    }
+  }
+
+  async function updateStaffMemberStatus(staffId: string, status: StudentStatus) {
+    setLoading((p) => ({ ...p, staffUpdate: staffId }));
+    try {
+      await apiRequest(`/admin/staff/${encodeURIComponent(staffId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+      setStaff((prev) =>
+        prev ? { ...prev, rows: prev.rows.map((r) => (r.id === staffId ? { ...r, status } : r)) } : prev
+      );
+      setSuccess("Staff status updated.");
+      clearFlash();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update staff");
+      clearFlash();
+    } finally {
+      setLoading((p) => ({ ...p, staffUpdate: "" }));
+    }
+  }
+
+  async function exportStaffCsv() {
+    setLoading((prev) => ({ ...prev, staffExport: true }));
+    try {
+      const query = new URLSearchParams();
+      if (staffQuery.trim()) query.set("q", staffQuery.trim());
+      if (staffStatus) query.set("status", staffStatus);
+      const exportData = await apiRequest<{ fileName: string; columns: Array<{ key: string; label: string }>; rows: Array<Record<string, string>> }>(
+        `/admin/schools/${encodeURIComponent(schoolId)}/staff/export${query.toString() ? `?${query.toString()}` : ""}`
+      );
+      exportCsv(
+        exportData.fileName,
+        exportData.columns.map((c) => c.label),
+        exportData.rows.map((row) => exportData.columns.map((c) => String(row[c.key] ?? "")))
+      );
+      setSuccess("Staff export ready.");
+      clearFlash();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to export staff");
+      clearFlash();
+    } finally {
+      setLoading((prev) => ({ ...prev, staffExport: false }));
+    }
+  }
+
   async function loadCampaigns() {
     setLoading((p) => ({ ...p, campaigns: true }));
     try {
@@ -704,11 +838,13 @@ export default function SchoolDrillPage() {
     const expectedVolume = Number(campaignForm.maxExpectedVolume || "0") || 0;
     setLoading((p) => ({ ...p, campaignCreate: true }));
     try {
+      const isStaffCampaign = campaignForm.folderType === "STAFF";
       await apiRequest(`/schools/${encodeURIComponent(schoolId)}/campaigns`, {
         method: "POST",
         body: JSON.stringify({
           campaignName: campaignForm.campaignName.trim(),
           institutionType: campaignForm.institutionType,
+          audience: isStaffCampaign ? "STAFF" : undefined,
           targetSegments: [
             {
               primaryValue: "ALL",
@@ -724,7 +860,11 @@ export default function SchoolDrillPage() {
             fullName: true,
             photo: true
           },
-          submissionModel: campaignForm.submissionModel,
+          submissionModel: {
+            ...campaignForm.submissionModel,
+            actorType: isStaffCampaign ? "STAFF" : campaignForm.submissionModel.actorType,
+            mode: isStaffCampaign ? "STAFF_SELF_FILL" : campaignForm.submissionModel.mode
+          },
           approvalRules: {
             approvalRequired: campaignForm.approvalRequired
           },
@@ -747,7 +887,20 @@ export default function SchoolDrillPage() {
 
   function updateCampaignInstitution(institutionType: InstitutionType) {
     setCampaignForm((prev) => {
-      const next = buildCampaignForm(institutionType, detail?.school.name || "");
+      const next = buildCampaignForm(institutionType, detail?.school.name || "", prev.folderType);
+      return {
+        ...next,
+        campaignName: prev.campaignName || next.campaignName,
+        startsAt: prev.startsAt || next.startsAt,
+        expiresAt: prev.expiresAt || next.expiresAt
+      };
+    });
+    setCampaignStep(1);
+  }
+
+  function updateCampaignFolderType(folderType: "STUDENT" | "STAFF") {
+    setCampaignForm((prev) => {
+      const next = buildCampaignForm(prev.institutionType, detail?.school.name || "", folderType);
       return {
         ...next,
         campaignName: prev.campaignName || next.campaignName,
@@ -1339,6 +1492,117 @@ export default function SchoolDrillPage() {
             </article>
           ) : null}
 
+          {tab === "staff" ? (
+            <article className="glass p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="m-0 text-sm font-semibold">Staff Members</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 rounded-lg border border-[var(--line-soft)] px-2 py-1 text-xs">
+                    <Search size={12} />
+                    <input
+                      value={staffQuery}
+                      onChange={(e) => setStaffQuery(e.target.value)}
+                      placeholder="Search name, designation..."
+                      className="bg-transparent outline-none"
+                    />
+                  </div>
+                  <select
+                    value={staffStatus}
+                    onChange={(e) => setStaffStatus(e.target.value as StudentStatus | "")}
+                    className="rounded-lg border border-[var(--line-soft)] bg-[var(--surface-strong)] px-2 py-1 text-xs outline-none"
+                  >
+                    <option value="">All Status</option>
+                    {WORKFLOW_STATUSES.map((st) => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => { setStaffPage(1); void loadStaff(1); }}
+                    className="rounded-lg border border-[var(--line-soft)] px-2 py-1 text-xs hover-glow"
+                  >
+                    <RefreshCcw size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void exportStaffCsv()}
+                    disabled={loading.staffExport}
+                    className="rounded-lg border border-[var(--line-soft)] px-2 py-1 text-xs hover-glow"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <Download size={12} /> {loading.staffExport ? "Preparing..." : "CSV"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {loading.staff ? (
+                <Skeleton className="h-52 rounded-xl" />
+              ) : staff?.rows.length ? (
+                <>
+                  <div className="overflow-auto rounded-xl border border-[var(--line-soft)]">
+                    <table className="w-full min-w-[1100px] text-left text-xs">
+                      <thead className="bg-[var(--surface-strong)] text-[var(--text-muted)]">
+                        <tr>
+                          <th className="px-3 py-2">Name</th>
+                          <th className="px-3 py-2">Employee ID</th>
+                          <th className="px-3 py-2">Designation</th>
+                          <th className="px-3 py-2">Department</th>
+                          <th className="px-3 py-2">Education</th>
+                          <th className="px-3 py-2">Photo</th>
+                          <th className="px-3 py-2">Status</th>
+                          <th className="px-3 py-2">Update</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {staff.rows.map((r) => (
+                          <tr key={r.id} className="border-t border-[var(--line-soft)] hover:bg-[var(--surface-strong)]/50 transition-colors">
+                            <td className="px-3 py-2 font-medium">{r.fullName}</td>
+                            <td className="px-3 py-2">{r.employeeId || "--"}</td>
+                            <td className="px-3 py-2">{r.designation || "--"}</td>
+                            <td className="px-3 py-2">{r.department || "--"}</td>
+                            <td className="px-3 py-2">{r.education || "--"}</td>
+                            <td className="px-3 py-2">
+                              {r.photoLink ? (
+                                <a href={r.photoLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-300 hover:underline">
+                                  <Link2 size={12} /> View
+                                </a>
+                              ) : r.photoKey ? (
+                                <span className="text-[var(--text-muted)]">Preparing...</span>
+                              ) : "--"}
+                            </td>
+                            <td className="px-3 py-2">{r.status}</td>
+                            <td className="px-3 py-2">
+                              <select
+                                value={r.status}
+                                onChange={(e) => void updateStaffMemberStatus(r.id, e.target.value as StudentStatus)}
+                                disabled={loading.staffUpdate === r.id}
+                                className="rounded-md border border-[var(--line-soft)] bg-[var(--surface-strong)] px-2 py-1 outline-none"
+                              >
+                                {WORKFLOW_STATUSES.map((st) => (
+                                  <option key={st} value={st}>{st}</option>
+                                ))}
+                              </select>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between text-xs text-[var(--text-muted)]">
+                    <span>Page {staff.page} • {fmtInt(staff.total)} rows</span>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setStaffPage((p) => Math.max(1, p - 1))} disabled={staff.page <= 1} className="rounded-md border border-[var(--line-soft)] px-2 py-1 disabled:opacity-40">Prev</button>
+                      <button type="button" onClick={() => { if (staff.page * staff.pageSize < staff.total) setStaffPage((p) => p + 1); }} disabled={staff.page * staff.pageSize >= staff.total} className="rounded-md border border-[var(--line-soft)] px-2 py-1 disabled:opacity-40">Next</button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <EmptyState text="No staff members found. Create a Staff intake campaign to collect staff data." />
+              )}
+            </article>
+          ) : null}
+
           {tab === "campaigns" ? (
             <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
               <article className="glass space-y-4 p-4">
@@ -1370,6 +1634,22 @@ export default function SchoolDrillPage() {
                 {campaignStep === 1 ? (
                   <div className="space-y-3 rounded-2xl border border-[var(--line-soft)] p-3">
                     <p className="m-0 text-xs font-semibold">Step 1: Campaign Basics</p>
+                    <div className="flex gap-2">
+                      {(["STUDENT", "STAFF"] as const).map((ft) => (
+                        <button
+                          key={ft}
+                          type="button"
+                          onClick={() => updateCampaignFolderType(ft)}
+                          className={`flex-1 rounded-xl border px-3 py-2 text-xs font-semibold ${
+                            campaignForm.folderType === ft
+                              ? "border-[#1C6ED5] bg-[rgba(28,110,213,0.18)] text-white"
+                              : "border-[var(--line-soft)] text-[var(--text-muted)]"
+                          }`}
+                        >
+                          {ft === "STUDENT" ? "Student Folder" : "Staff Folder"}
+                        </button>
+                      ))}
+                    </div>
                     <div className="grid gap-2 md:grid-cols-2">
                       <InputField label="Campaign Name" value={campaignForm.campaignName} onChange={(value) => setCampaignForm((prev) => ({ ...prev, campaignName: value }))} />
                       <label className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
@@ -1408,6 +1688,11 @@ export default function SchoolDrillPage() {
                     <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs text-[var(--text-muted)]">
                       A single secure intake link will be generated for this campaign. Class and division can now be captured directly inside the intake form instead of creating segment rows here.
                     </div>
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${campaignForm.folderType === "STAFF" ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-sky-400/40 bg-sky-500/10 text-sky-200"}`}>
+                        {campaignForm.folderType === "STAFF" ? "Staff Folder" : "Student Folder"}
+                      </span>
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       <span className="rounded-full border border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] px-3 py-2 text-xs text-white">
                         Full Name
@@ -1415,20 +1700,22 @@ export default function SchoolDrillPage() {
                       <span className="rounded-full border border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] px-3 py-2 text-xs text-white">
                         Photo Capture / Upload Mandatory
                       </span>
-                      {DATA_SCHEMA_FIELDS.filter((field) => field.key !== "fullName" && !(campaignForm.institutionType === "COLLEGE" && field.key === "parentName")).map((field) => (
-                        <button
-                          key={field.key}
-                          type="button"
-                          onClick={() => toggleSchemaField(field.key)}
-                          className={`rounded-full border px-3 py-2 text-xs ${
-                            campaignForm.dataSchema[field.key]
-                              ? "border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] text-white"
-                              : "border-[var(--line-soft)] text-[var(--text-muted)]"
-                          }`}
-                        >
-                          {field.label}
-                        </button>
-                      ))}
+                      {(campaignForm.folderType === "STAFF" ? STAFF_SCHEMA_FIELDS : DATA_SCHEMA_FIELDS)
+                        .filter((field) => field.key !== "fullName" && !(campaignForm.institutionType === "COLLEGE" && field.key === "parentName"))
+                        .map((field) => (
+                          <button
+                            key={field.key}
+                            type="button"
+                            onClick={() => toggleSchemaField(field.key)}
+                            className={`rounded-full border px-3 py-2 text-xs ${
+                              campaignForm.dataSchema[field.key]
+                                ? "border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] text-white"
+                                : "border-[var(--line-soft)] text-[var(--text-muted)]"
+                            }`}
+                          >
+                            {field.label}
+                          </button>
+                        ))}
                     </div>
                     <div className="grid gap-2 md:grid-cols-2">
                       <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
@@ -1560,6 +1847,11 @@ export default function SchoolDrillPage() {
                         : "";
                       return (
                         <div key={l.id} className="rounded-lg border border-[var(--line-soft)] px-2 py-2 text-xs">
+                          <div className="mb-1 flex items-center gap-2">
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${l.audience === "STAFF" ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-sky-400/40 bg-sky-500/10 text-sky-200"}`}>
+                              {l.audience === "STAFF" ? "Staff" : "Student"}
+                            </span>
+                          </div>
                           <p className="m-0 font-medium">
                             {(l.targetSegments[0]?.label || "Open Intake Link")} • {l.photoBgPreference}
                           </p>
@@ -1897,41 +2189,50 @@ function SchoolLoader() {
   );
 }
 
-function buildCampaignForm(institutionType: InstitutionType, schoolName = ""): CampaignForm {
+function buildCampaignForm(institutionType: InstitutionType, schoolName = "", folderType: "STUDENT" | "STAFF" = "STUDENT"): CampaignForm {
   const descriptor = getInstitutionDescriptor(institutionType);
   const now = new Date();
   const expiry = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
   const schoolDefaults = institutionType === "SCHOOL";
+  const isStaff = folderType === "STAFF";
   return {
-    campaignName: schoolName ? `${schoolName} ${now.getFullYear()} ${descriptor.label} Drive` : "",
+    campaignName: schoolName ? `${schoolName} ${now.getFullYear()} ${isStaff ? "Staff" : descriptor.label} Drive` : "",
     institutionType,
+    folderType,
     maxExpectedVolume: "",
     startsAt: isoDate(now),
     expiresAt: isoDate(expiry),
     dataSchema: {
       fullName: true,
       photo: true,
-      className: schoolDefaults,
-      division: schoolDefaults,
-      rollNumber: schoolDefaults,
+      // student fields
+      className: schoolDefaults && !isStaff,
+      division: schoolDefaults && !isStaff,
+      rollNumber: schoolDefaults && !isStaff,
       dob: schoolDefaults,
       bloodGroup: schoolDefaults,
-      parentName: institutionType === "SCHOOL",
+      parentName: institutionType === "SCHOOL" && !isStaff,
       mobileNumber: true,
       emergencyNumber: schoolDefaults,
       fullAddress: schoolDefaults,
-      aadhaarNumber: schoolDefaults
+      aadhaarNumber: schoolDefaults,
+      // staff fields
+      employeeId: isStaff,
+      designation: isStaff,
+      department: isStaff,
+      education: isStaff,
+      joiningDate: isStaff
     },
     submissionModel: {
-      mode: descriptor.defaultMode,
-      actorType: descriptor.actorType,
+      mode: isStaff ? "STAFF_SELF_FILL" : descriptor.defaultMode,
+      actorType: isStaff ? "STAFF" : descriptor.actorType,
       requirePhotoStandardization: true,
       requireParentOtp: true,
       distributionChannels: descriptor.defaultChannels,
       bulkUploadEnabled: institutionType !== "SCHOOL",
       intakeLinkOptional: institutionType === "COLLEGE",
       workflowRequired: true,
-      allowMobileEditAfterVerification: false,
+      allowMobileEditAfterVerification: isStaff,
       duplicatePolicy: "ONE_PER_STUDENT"
     },
     approvalRequired: true,
@@ -2167,6 +2468,7 @@ function formatAudienceLabel(value?: IntakeAudience | string | null) {
   if (value === "PARENT") return "Parent";
   if (value === "STUDENT") return "Student";
   if (value === "EMPLOYEE") return "Employee";
+  if (value === "STAFF") return "Staff";
   return formatKeyLabel(value);
 }
 

@@ -65,6 +65,27 @@ export class SubmitStudentDto {
   @IsString()
   segmentSecondaryValue?: string;
 
+  // Staff-specific fields
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
+
+  @IsOptional()
+  @IsString()
+  designation?: string;
+
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @IsOptional()
+  @IsString()
+  education?: string;
+
+  @IsOptional()
+  @IsString()
+  joiningDate?: string;
+
   @IsOptional()
   @IsString()
   photoKey?: string;
