@@ -86,6 +86,12 @@ type SessionContext = {
     fullAddress?: boolean;
     aadhaarNumber?: boolean;
     rfidRequired?: boolean;
+    // staff fields
+    employeeId?: boolean;
+    designation?: boolean;
+    department?: boolean;
+    education?: boolean;
+    joiningDate?: boolean;
   };
   submissionModel: {
     mode: string;
@@ -118,6 +124,12 @@ type IntakeDraft = {
   bloodGroup: string;
   emergencyNumber: string;
   aadhaarNumber: string;
+  // staff fields
+  employeeId: string;
+  designation: string;
+  department: string;
+  education: string;
+  joiningDate: string;
 };
 
 type PhotoAnalysisState = {
@@ -217,6 +229,11 @@ function IntakePortalInner() {
     mobile: "",
     className: "",
     division: "",
+    employeeId: "",
+    designation: "",
+    department: "",
+    education: "",
+    joiningDate: "",
     rollNumber: "",
     address: "",
     dob: "",
@@ -261,6 +278,12 @@ function IntakePortalInner() {
   const showEmergencyNumber = Boolean(currentSchema.emergencyNumber);
   const showAadhaarNumber = Boolean(currentSchema.aadhaarNumber);
   const showRfid = Boolean(currentSchema.rfidRequired);
+  const showEmployeeId = Boolean(currentSchema.employeeId);
+  const showDesignation = Boolean(currentSchema.designation);
+  const showDepartment = Boolean(currentSchema.department);
+  const showEducation = Boolean(currentSchema.education);
+  const showJoiningDate = Boolean(currentSchema.joiningDate);
+  const isStaffIntake = actorType === "STAFF";
   // Anon sessions have "ANON" as verifiedMobile — fall back to the user-entered mobile from the form
   const verifiedMobile = (sessionContext?.session.verifiedMobile === "ANON" ? "" : sessionContext?.session.verifiedMobile) || mobile;
   const allowMobileEdit = true; // Always allow mobile edit in anon session mode
@@ -395,7 +418,12 @@ function IntakePortalInner() {
         dob: readDraftValue(ctx.draft, "dob"),
         bloodGroup: readDraftValue(ctx.draft, "bloodGroup"),
         emergencyNumber: readDraftValue(ctx.draft, "emergencyNumber"),
-        aadhaarNumber: readDraftValue(ctx.draft, "aadhaarNumber")
+        aadhaarNumber: readDraftValue(ctx.draft, "aadhaarNumber"),
+        employeeId: readDraftValue(ctx.draft, "employeeId"),
+        designation: readDraftValue(ctx.draft, "designation"),
+        department: readDraftValue(ctx.draft, "department"),
+        education: readDraftValue(ctx.draft, "education"),
+        joiningDate: readDraftValue(ctx.draft, "joiningDate")
       });
       setStep("details");
     } catch (e) {
@@ -475,7 +503,12 @@ function IntakePortalInner() {
           dob: draft.dob || undefined,
           bloodGroup: draft.bloodGroup.trim() || undefined,
           emergencyNumber: normalizeMobile(draft.emergencyNumber) || undefined,
-          aadhaarNumber: normalizeAadhaar(draft.aadhaarNumber) || undefined
+          aadhaarNumber: normalizeAadhaar(draft.aadhaarNumber) || undefined,
+          employeeId: draft.employeeId.trim() || undefined,
+          designation: draft.designation.trim() || undefined,
+          department: draft.department.trim() || undefined,
+          education: draft.education.trim() || undefined,
+          joiningDate: draft.joiningDate || undefined
         })
       });
       const data = await res.json();
@@ -825,7 +858,12 @@ function IntakePortalInner() {
           bloodGroup: draft.bloodGroup.trim() || undefined,
           emergencyNumber: normalizeMobile(draft.emergencyNumber) || undefined,
           aadhaarNumber: normalizeAadhaar(draft.aadhaarNumber) || undefined,
-          preferredPhotoName: draft.fullName.trim() || "student-photo",
+          employeeId: draft.employeeId.trim() || undefined,
+          designation: draft.designation.trim() || undefined,
+          department: draft.department.trim() || undefined,
+          education: draft.education.trim() || undefined,
+          joiningDate: draft.joiningDate || undefined,
+          preferredPhotoName: draft.fullName.trim() || "staff-photo",
           photoAnalysisId: photoAnalysis?.analysisId,
           photoKey: photoAnalysis?.photoKey,
           photoDataUrl: photoAnalysis?.analysisId ? undefined : capturedDataUrl
@@ -865,7 +903,12 @@ function IntakePortalInner() {
       dob: "",
       bloodGroup: "",
       emergencyNumber: "",
-      aadhaarNumber: ""
+      aadhaarNumber: "",
+      employeeId: "",
+      designation: "",
+      department: "",
+      education: "",
+      joiningDate: ""
     });
     setStep("details");
   }
@@ -887,7 +930,12 @@ function IntakePortalInner() {
       dob: "",
       bloodGroup: "",
       emergencyNumber: draft.emergencyNumber,
-      aadhaarNumber: ""
+      aadhaarNumber: "",
+      employeeId: "",
+      designation: draft.designation,
+      department: draft.department,
+      education: "",
+      joiningDate: ""
     });
     setStep("details");
   }
@@ -1019,6 +1067,42 @@ function IntakePortalInner() {
                   value={draft.rollNumber}
                   onChange={(value) => setDraft((prev) => ({ ...prev, rollNumber: value }))}
                   placeholder="Roll number"
+                />
+              ) : null}
+              {showEmployeeId ? (
+                <Field
+                  value={draft.employeeId}
+                  onChange={(value) => setDraft((prev) => ({ ...prev, employeeId: value }))}
+                  placeholder="Employee ID"
+                />
+              ) : null}
+              {showDesignation ? (
+                <Field
+                  value={draft.designation}
+                  onChange={(value) => setDraft((prev) => ({ ...prev, designation: value }))}
+                  placeholder="Designation (e.g. Teacher, Principal)"
+                />
+              ) : null}
+              {showDepartment ? (
+                <Field
+                  value={draft.department}
+                  onChange={(value) => setDraft((prev) => ({ ...prev, department: value }))}
+                  placeholder="Department"
+                />
+              ) : null}
+              {showEducation ? (
+                <Field
+                  value={draft.education}
+                  onChange={(value) => setDraft((prev) => ({ ...prev, education: value }))}
+                  placeholder="Education qualification"
+                />
+              ) : null}
+              {showJoiningDate ? (
+                <Field
+                  value={draft.joiningDate}
+                  onChange={(value) => setDraft((prev) => ({ ...prev, joiningDate: value }))}
+                  type="date"
+                  placeholder="Date of joining"
                 />
               ) : null}
               {showMobile ? (
@@ -1343,11 +1427,16 @@ function IntakePortalInner() {
                 {/* Student details card */}
                 <div className="rounded-2xl border border-[var(--line-soft)] bg-[var(--surface-soft)] p-4">
                   <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
-                    Student Details
+                    {isStaffIntake ? "Staff Details" : "Student Details"}
                   </p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                     <ReviewField label={actorType === "PARENT" ? "Student Name" : "Name"} value={draft.fullName} />
                     {showParentName && <ReviewField label="Parent Name" value={draft.parentName} />}
+                    {showEmployeeId && <ReviewField label="Employee ID" value={draft.employeeId} />}
+                    {showDesignation && <ReviewField label="Designation" value={draft.designation} />}
+                    {showDepartment && <ReviewField label="Department" value={draft.department} />}
+                    {showEducation && <ReviewField label="Education" value={draft.education} />}
+                    {showJoiningDate && <ReviewField label="Date of Joining" value={draft.joiningDate} />}
                     {showClassName && <ReviewField label={primaryLabel} value={fixedPrimaryValue || draft.className} />}
                     {showDivision && <ReviewField label={secondaryLabel || "Division"} value={fixedSecondaryValue || draft.division} />}
                     {showRollNumber && <ReviewField label="Roll No." value={draft.rollNumber} />}
