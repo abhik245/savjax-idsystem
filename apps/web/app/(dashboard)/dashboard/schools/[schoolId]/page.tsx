@@ -329,6 +329,8 @@ type CampaignForm = {
   photoBgPreference: string;
 };
 
+const MAX_CUSTOM_FIELDS = 12;
+
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" },
   { key: "students", label: "Students" },
@@ -935,16 +937,24 @@ export default function SchoolDrillPage() {
       clearFlash();
       return;
     }
+    if (campaignForm.customFields.length >= MAX_CUSTOM_FIELDS) {
+      setError(`You can add up to ${MAX_CUSTOM_FIELDS} custom dropdowns per campaign.`);
+      clearFlash();
+      return;
+    }
     const key = trimmedLabel
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "");
-    setCampaignForm((prev) => {
-      if (prev.customFields.some((field) => field.key === key)) {
-        return prev;
-      }
-      return { ...prev, customFields: [...prev.customFields, { key, label: trimmedLabel, options }] };
-    });
+    if (campaignForm.customFields.some((field) => field.key === key)) {
+      setError(`A dropdown labeled "${trimmedLabel}" already exists. Use a different label.`);
+      clearFlash();
+      return;
+    }
+    setCampaignForm((prev) => ({
+      ...prev,
+      customFields: [...prev.customFields, { key, label: trimmedLabel, options }]
+    }));
   }
 
   function removeCustomDropdownField(key: string) {
@@ -1759,9 +1769,11 @@ export default function SchoolDrillPage() {
                     </div>
 
                     <div className="rounded-2xl border border-[var(--line-soft)] p-3">
-                      <p className="m-0 text-xs font-semibold">Custom Dropdown Fields</p>
+                      <p className="m-0 text-xs font-semibold">
+                        Custom Dropdown Fields ({campaignForm.customFields.length}/{MAX_CUSTOM_FIELDS})
+                      </p>
                       <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">
-                        Add your own dropdown — e.g. Board (CBSE, ICSE) or Standard (Jr. KG, Sr. KG, 1, 2, 3...).
+                        Add your own dropdown — e.g. Board (CBSE, ICSE) or Standard (Jr. KG, Sr. KG, 1, 2, 3...). Up to {MAX_CUSTOM_FIELDS} per campaign.
                       </p>
                       {campaignForm.customFields.length ? (
                         <div className="mt-2 flex flex-wrap gap-2">
@@ -1782,33 +1794,39 @@ export default function SchoolDrillPage() {
                           ))}
                         </div>
                       ) : null}
-                      <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1.4fr_auto]">
-                        <input
-                          value={customFieldLabelInput}
-                          onChange={(e) => setCustomFieldLabelInput(e.target.value)}
-                          placeholder="Dropdown label (e.g. Board)"
-                          className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs outline-none"
-                        />
-                        <input
-                          value={customFieldOptionsInput}
-                          onChange={(e) => setCustomFieldOptionsInput(e.target.value)}
-                          placeholder="Options, comma separated (e.g. CBSE, ICSE)"
-                          className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            addCustomDropdownField(customFieldLabelInput, customFieldOptionsInput);
-                            setCustomFieldLabelInput("");
-                            setCustomFieldOptionsInput("");
-                          }}
-                          className="rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs hover-glow"
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            <Plus size={12} /> Add Dropdown
-                          </span>
-                        </button>
-                      </div>
+                      {campaignForm.customFields.length < MAX_CUSTOM_FIELDS ? (
+                        <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1.4fr_auto]">
+                          <input
+                            value={customFieldLabelInput}
+                            onChange={(e) => setCustomFieldLabelInput(e.target.value)}
+                            placeholder="Dropdown label (e.g. Board)"
+                            className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs outline-none"
+                          />
+                          <input
+                            value={customFieldOptionsInput}
+                            onChange={(e) => setCustomFieldOptionsInput(e.target.value)}
+                            placeholder="Options, comma separated (e.g. CBSE, ICSE)"
+                            className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              addCustomDropdownField(customFieldLabelInput, customFieldOptionsInput);
+                              setCustomFieldLabelInput("");
+                              setCustomFieldOptionsInput("");
+                            }}
+                            className="rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs hover-glow"
+                          >
+                            <span className="inline-flex items-center gap-1">
+                              <Plus size={12} /> Add Dropdown
+                            </span>
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+                          Maximum of {MAX_CUSTOM_FIELDS} custom dropdowns reached. Remove one above to add another.
+                        </p>
+                      )}
                     </div>
 
                     <div className="grid gap-2 md:grid-cols-2">
