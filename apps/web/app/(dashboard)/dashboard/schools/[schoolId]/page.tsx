@@ -841,6 +841,29 @@ export default function SchoolDrillPage() {
       return;
     }
 
+    const pendingLabel = customFieldLabelInput.trim();
+    const pendingOptions = customFieldOptionsInput.trim();
+    if (pendingLabel || pendingOptions) {
+      if (!pendingLabel || !pendingOptions) {
+        setError(
+          'You typed into the custom dropdown box but didn\'t click "Add Dropdown" — finish it or clear both fields before creating the campaign.'
+        );
+        clearFlash();
+        return;
+      }
+      if (campaignForm.customFields.length >= MAX_CUSTOM_FIELDS) {
+        setError(`You can add up to ${MAX_CUSTOM_FIELDS} custom dropdowns per campaign — remove one before adding "${pendingLabel}".`);
+        clearFlash();
+        return;
+      }
+      addCustomDropdownField(pendingLabel, pendingOptions);
+      setCustomFieldLabelInput("");
+      setCustomFieldOptionsInput("");
+      setError(`Added the "${pendingLabel}" dropdown — click "Create Campaign & Generate Links" again to confirm.`);
+      clearFlash();
+      return;
+    }
+
     const expectedVolume = Number(campaignForm.maxExpectedVolume || "0") || 0;
     setLoading((p) => ({ ...p, campaignCreate: true }));
     try {
