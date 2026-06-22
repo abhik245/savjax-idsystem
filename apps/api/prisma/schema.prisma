@@ -398,6 +398,7 @@ model Student {
   photoQualityStatus PhotoQualityStatus    @default(NOT_CHECKED)
   photoQualityScore  Float?
   photoAnalysisJson  Json?
+  customFieldsJson   Json?
   correctedAt        DateTime?
   proofs             Proof[]
   orderItems         OrderStudent[]
@@ -440,6 +441,7 @@ model StaffMember {
   photoQualityStatus   PhotoQualityStatus    @default(NOT_CHECKED)
   photoQualityScore    Float?
   photoAnalysisJson    Json?
+  customFieldsJson     Json?
   duplicateKey         String?
   duplicateFlag        Boolean               @default(false)
   rejectionNote        String?
@@ -695,6 +697,7 @@ model IntakeCampaign {
   expiresAt         DateTime
   targetSegmentsJson Json
   dataSchemaJson    Json?
+  customFieldsJson  Json?
   submissionModelJson Json?
   approvalRulesJson Json?
   metadataJson      Json?

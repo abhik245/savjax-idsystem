@@ -93,6 +93,7 @@ type SessionContext = {
     education?: boolean;
     joiningDate?: boolean;
   };
+  customFields?: Array<{ key: string; label: string; options: string[] }>;
   submissionModel: {
     mode: string;
     actorType: ActorType;
@@ -241,6 +242,7 @@ function IntakePortalInner() {
     emergencyNumber: "",
     aadhaarNumber: ""
   });
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, string>>({});
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -254,6 +256,7 @@ function IntakePortalInner() {
 
   const actorType = sessionContext?.session.actorType || publicMeta?.actorType || "PARENT";
   const currentSchema = sessionContext?.dataSchema || {};
+  const customFields = sessionContext?.customFields || [];
   const submissionModel: SessionContext["submissionModel"] = sessionContext?.submissionModel || {
     mode: "OTP_FIRST",
     actorType
@@ -425,6 +428,12 @@ function IntakePortalInner() {
         education: readDraftValue(ctx.draft, "education"),
         joiningDate: readDraftValue(ctx.draft, "joiningDate")
       });
+      const draftCustomValues = ctx.draft?.customFieldValues;
+      setCustomFieldValues(
+        draftCustomValues && typeof draftCustomValues === "object"
+          ? (draftCustomValues as Record<string, string>)
+          : {}
+      );
       setStep("details");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load intake session");
@@ -508,7 +517,8 @@ function IntakePortalInner() {
           designation: draft.designation.trim() || undefined,
           department: draft.department.trim() || undefined,
           education: draft.education.trim() || undefined,
-          joiningDate: draft.joiningDate || undefined
+          joiningDate: draft.joiningDate || undefined,
+          customFieldValues
         })
       });
       const data = await res.json();
@@ -863,6 +873,7 @@ function IntakePortalInner() {
           department: draft.department.trim() || undefined,
           education: draft.education.trim() || undefined,
           joiningDate: draft.joiningDate || undefined,
+          customFieldValues,
           preferredPhotoName: draft.fullName.trim() || "staff-photo",
           photoAnalysisId: photoAnalysis?.analysisId,
           photoKey: photoAnalysis?.photoKey,
@@ -910,6 +921,7 @@ function IntakePortalInner() {
       education: "",
       joiningDate: ""
     });
+    setCustomFieldValues({});
     setStep("details");
   }
 
@@ -937,6 +949,7 @@ function IntakePortalInner() {
       education: "",
       joiningDate: ""
     });
+    // Custom field values (e.g. Board) carry over to the sibling by default
     setStep("details");
   }
 
@@ -1159,6 +1172,25 @@ function IntakePortalInner() {
                   placeholder="Aadhaar number"
                 />
               ) : null}
+              {customFields.map((field) => (
+                <select
+                  key={field.key}
+                  value={customFieldValues[field.key] || ""}
+                  onChange={(event) =>
+                    setCustomFieldValues((prev) => ({ ...prev, [field.key]: event.target.value }))
+                  }
+                  className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-soft)] px-3 py-2 text-sm outline-none"
+                >
+                  <option value="" disabled>
+                    {field.label}
+                  </option>
+                  {field.options.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              ))}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               {submissionModel.allowDraftSave ? (
@@ -1445,6 +1477,11 @@ function IntakePortalInner() {
                     {showBloodGroup && <ReviewField label="Blood Group" value={draft.bloodGroup} />}
                     {showAadhaarNumber && <ReviewField label="Aadhaar" value={draft.aadhaarNumber ? `XXXX-XXXX-${draft.aadhaarNumber.slice(-4)}` : "--"} />}
                     {showEmergencyNumber && <ReviewField label="Emergency No." value={draft.emergencyNumber} />}
+                    {customFields.map((field) =>
+                      customFieldValues[field.key] ? (
+                        <ReviewField key={field.key} label={field.label} value={customFieldValues[field.key]} />
+                      ) : null
+                    )}
                   </div>
                   {showAddress && draft.address && (
                     <div className="mt-3 border-t border-[var(--line-soft)] pt-2">

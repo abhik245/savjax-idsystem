@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   Link2,
+  Plus,
   RefreshCcw,
   Search,
   ShieldCheck,
@@ -310,6 +311,7 @@ type CampaignForm = {
     education: boolean;
     joiningDate: boolean;
   };
+  customFields: Array<{ key: string; label: string; options: string[] }>;
   submissionModel: {
     mode: string;
     actorType: "PARENT" | "STUDENT" | "STAFF";
@@ -433,6 +435,8 @@ export default function SchoolDrillPage() {
   const [campaigns, setCampaigns] = useState<IntakeCampaignRow[]>([]);
   const [campaignForm, setCampaignForm] = useState<CampaignForm>(() => buildCampaignForm("SCHOOL"));
   const [campaignStep, setCampaignStep] = useState<1 | 2>(1);
+  const [customFieldLabelInput, setCustomFieldLabelInput] = useState("");
+  const [customFieldOptionsInput, setCustomFieldOptionsInput] = useState("");
 
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [recon, setRecon] = useState<BillingReconciliation | null>(null);
@@ -860,6 +864,7 @@ export default function SchoolDrillPage() {
             fullName: true,
             photo: true
           },
+          customFields: campaignForm.customFields,
           submissionModel: {
             ...campaignForm.submissionModel,
             actorType: isStaffCampaign ? "STAFF" : campaignForm.submissionModel.actorType,
@@ -874,6 +879,8 @@ export default function SchoolDrillPage() {
       });
       setSuccess("Campaign created and child intake links generated.");
       setCampaignForm(buildCampaignForm(campaignForm.institutionType, detail?.school.name || ""));
+      setCustomFieldLabelInput("");
+      setCustomFieldOptionsInput("");
       setCampaignStep(1);
       await Promise.all([loadCampaigns(), loadDetail(), loadAudits(1)]);
       clearFlash();
@@ -892,7 +899,8 @@ export default function SchoolDrillPage() {
         ...next,
         campaignName: prev.campaignName || next.campaignName,
         startsAt: prev.startsAt || next.startsAt,
-        expiresAt: prev.expiresAt || next.expiresAt
+        expiresAt: prev.expiresAt || next.expiresAt,
+        customFields: prev.customFields
       };
     });
     setCampaignStep(1);
@@ -905,10 +913,42 @@ export default function SchoolDrillPage() {
         ...next,
         campaignName: prev.campaignName || next.campaignName,
         startsAt: prev.startsAt || next.startsAt,
-        expiresAt: prev.expiresAt || next.expiresAt
+        expiresAt: prev.expiresAt || next.expiresAt,
+        customFields: prev.customFields
       };
     });
     setCampaignStep(1);
+  }
+
+  function addCustomDropdownField(label: string, optionsRaw: string) {
+    const trimmedLabel = label.trim();
+    const options = Array.from(
+      new Set(
+        optionsRaw
+          .split(",")
+          .map((option) => option.trim())
+          .filter(Boolean)
+      )
+    );
+    if (!trimmedLabel || options.length === 0) {
+      setError("Custom dropdown needs a label and at least one option.");
+      clearFlash();
+      return;
+    }
+    const key = trimmedLabel
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    setCampaignForm((prev) => {
+      if (prev.customFields.some((field) => field.key === key)) {
+        return prev;
+      }
+      return { ...prev, customFields: [...prev.customFields, { key, label: trimmedLabel, options }] };
+    });
+  }
+
+  function removeCustomDropdownField(key: string) {
+    setCampaignForm((prev) => ({ ...prev, customFields: prev.customFields.filter((field) => field.key !== key) }));
   }
 
   function advanceCampaignStep() {
@@ -1717,6 +1757,60 @@ export default function SchoolDrillPage() {
                           </button>
                         ))}
                     </div>
+
+                    <div className="rounded-2xl border border-[var(--line-soft)] p-3">
+                      <p className="m-0 text-xs font-semibold">Custom Dropdown Fields</p>
+                      <p className="m-0 mt-1 text-[11px] text-[var(--text-muted)]">
+                        Add your own dropdown — e.g. Board (CBSE, ICSE) or Standard (Jr. KG, Sr. KG, 1, 2, 3...).
+                      </p>
+                      {campaignForm.customFields.length ? (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {campaignForm.customFields.map((field) => (
+                            <span
+                              key={field.key}
+                              className="inline-flex items-center gap-2 rounded-full border border-[#1C6ED5] bg-[rgba(28,110,213,0.16)] px-3 py-2 text-xs text-white"
+                            >
+                              {field.label}: {field.options.join(", ")}
+                              <button
+                                type="button"
+                                onClick={() => removeCustomDropdownField(field.key)}
+                                className="text-white/70 hover:text-white"
+                              >
+                                <X size={12} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1.4fr_auto]">
+                        <input
+                          value={customFieldLabelInput}
+                          onChange={(e) => setCustomFieldLabelInput(e.target.value)}
+                          placeholder="Dropdown label (e.g. Board)"
+                          className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs outline-none"
+                        />
+                        <input
+                          value={customFieldOptionsInput}
+                          onChange={(e) => setCustomFieldOptionsInput(e.target.value)}
+                          placeholder="Options, comma separated (e.g. CBSE, ICSE)"
+                          className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            addCustomDropdownField(customFieldLabelInput, customFieldOptionsInput);
+                            setCustomFieldLabelInput("");
+                            setCustomFieldOptionsInput("");
+                          }}
+                          className="rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs hover-glow"
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            <Plus size={12} /> Add Dropdown
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="grid gap-2 md:grid-cols-2">
                       <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-strong)] px-3 py-2 text-xs">
                         <span className="mb-1 block text-[11px] text-[var(--text-muted)]">Actor Type</span>
@@ -2223,6 +2317,7 @@ function buildCampaignForm(institutionType: InstitutionType, schoolName = "", fo
       education: isStaff,
       joiningDate: isStaff
     },
+    customFields: [],
     submissionModel: {
       mode: isStaff ? "STAFF_SELF_FILL" : descriptor.defaultMode,
       actorType: isStaff ? "STAFF" : descriptor.actorType,

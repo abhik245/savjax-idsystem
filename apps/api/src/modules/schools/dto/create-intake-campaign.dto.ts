@@ -119,6 +119,19 @@ export class CreateIntakeCampaignDataSchemaDto {
   joiningDate?: boolean;
 }
 
+export class CreateIntakeCampaignCustomFieldDto {
+  @IsOptional()
+  @IsString()
+  key?: string;
+
+  @IsString()
+  label!: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  options!: string[];
+}
+
 export class CreateIntakeCampaignSubmissionModelDto {
   @IsString()
   mode!: string;
@@ -202,6 +215,12 @@ export class CreateIntakeCampaignDto {
   @ValidateNested()
   @Type(() => CreateIntakeCampaignDataSchemaDto)
   dataSchema?: CreateIntakeCampaignDataSchemaDto;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateIntakeCampaignCustomFieldDto)
+  customFields?: CreateIntakeCampaignCustomFieldDto[];
 
   @ValidateNested()
   @Type(() => CreateIntakeCampaignSubmissionModelDto)

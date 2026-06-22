@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Matches } from "class-validator";
+import { IsObject, IsOptional, IsString, Matches } from "class-validator";
 
 export class SaveIntakeDraftDto {
   @IsOptional()
@@ -56,4 +56,8 @@ export class SaveIntakeDraftDto {
   @IsOptional()
   @IsString()
   segmentSecondaryValue?: string;
+
+  @IsOptional()
+  @IsObject()
+  customFieldValues?: Record<string, string>;
 }

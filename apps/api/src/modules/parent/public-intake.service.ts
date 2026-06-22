@@ -125,6 +125,7 @@ export class PublicIntakeService {
                 expiresAt: true,
                 targetSegmentsJson: true,
                 dataSchemaJson: true,
+                customFieldsJson: true,
                 submissionModelJson: true,
                 approvalRulesJson: true,
                 metadataJson: true
@@ -251,6 +252,7 @@ export class PublicIntakeService {
     const session = await this.resolveVerifiedSession(sessionToken, context);
     const link = session.intakeLink;
     const schema = this.readSchema(link);
+    const customFields = this.readCustomFields(link);
     const submissionModel = this.readSubmissionModel(link);
     const primaryValue = this.segmentPrimary(link);
     const secondaryValue = this.segmentSecondary(link);
@@ -290,6 +292,7 @@ export class PublicIntakeService {
           }
         : null,
       dataSchema: schema,
+      customFields,
       submissionModel: {
         ...submissionModel,
         actorType: session.actorType,
@@ -328,7 +331,8 @@ export class PublicIntakeService {
       dob: this.normalizeString(dto.dob),
       bloodGroup: this.normalizeString(dto.bloodGroup).toUpperCase(),
       emergencyNumber: this.normalizeMobile(dto.emergencyNumber),
-      aadhaarNumber: this.normalizeAadhaar(dto.aadhaarNumber)
+      aadhaarNumber: this.normalizeAadhaar(dto.aadhaarNumber),
+      customFieldValues: this.sanitizeCustomFieldValues(session.intakeLink, dto.customFieldValues)
     };
 
     await this.prisma.intakeAuthSession.update({
@@ -533,6 +537,7 @@ export class PublicIntakeService {
         submissionModel.workflowRequired ||
         this.readBoolean(this.asRecord(link.campaign?.approvalRulesJson), "approvalRequired", true);
       const nextStage = workflowRequired ? IntakeSubmissionStage.UNDER_REVIEW : IntakeSubmissionStage.SUBMITTED;
+      const sanitizedStaffCustomFields = this.sanitizeCustomFieldValues(link, dto.customFieldValues);
       const staffData = {
         schoolId: link.schoolId,
         intakeLinkId: link.id,
@@ -559,7 +564,8 @@ export class PublicIntakeService {
         correctedAt: existingStaff ? new Date() : null,
         photoQualityStatus: photo.photoQualityStatus,
         photoQualityScore: photo.photoQualityScore,
-        photoAnalysisJson: photo.photoAnalysisJson as Prisma.InputJsonValue
+        photoAnalysisJson: photo.photoAnalysisJson as Prisma.InputJsonValue,
+        customFieldsJson: sanitizedStaffCustomFields as Prisma.InputJsonValue
       };
       const staffMember = existingStaff
         ? await this.prisma.staffMember.update({ where: { id: existingStaff.id }, data: staffData })
@@ -579,6 +585,7 @@ export class PublicIntakeService {
         bloodGroup,
         emergencyNumber,
         aadhaarNumber,
+        customFieldValues: sanitizedStaffCustomFields,
         campaignName: link.campaignName,
         institutionType: link.institutionType,
         audience: link.audience,
@@ -682,6 +689,7 @@ export class PublicIntakeService {
     const nextStage = workflowRequired ? IntakeSubmissionStage.UNDER_REVIEW : IntakeSubmissionStage.SUBMITTED;
     const rollNumber =
       requestedRollNumber || existing?.rollNumber || (await this.generateRoll(link.id, link.institutionType));
+    const sanitizedStudentCustomFields = this.sanitizeCustomFieldValues(link, dto.customFieldValues);
 
     const studentData = {
       schoolId: link.schoolId,
@@ -706,7 +714,8 @@ export class PublicIntakeService {
       correctedAt: existing ? new Date() : null,
       photoQualityStatus: photo.photoQualityStatus,
       photoQualityScore: photo.photoQualityScore,
-      photoAnalysisJson: photo.photoAnalysisJson as Prisma.InputJsonValue
+      photoAnalysisJson: photo.photoAnalysisJson as Prisma.InputJsonValue,
+      customFieldsJson: sanitizedStudentCustomFields as Prisma.InputJsonValue
     };
 
     const student = existing
@@ -719,6 +728,7 @@ export class PublicIntakeService {
       parentName: this.normalizeString(dto.parentName) || null,
       verifiedMobile,
       submittedMobile: visibleMobile || null,
+      customFieldValues: sanitizedStudentCustomFields,
       className,
       division: section,
       rollNumber,
@@ -853,6 +863,7 @@ export class PublicIntakeService {
             expiresAt: true,
             targetSegmentsJson: true,
             dataSchemaJson: true,
+            customFieldsJson: true,
             submissionModelJson: true,
             approvalRulesJson: true,
             metadataJson: true
@@ -884,6 +895,7 @@ export class PublicIntakeService {
                 expiresAt: true,
                 targetSegmentsJson: true,
                 dataSchemaJson: true,
+                customFieldsJson: true,
                 submissionModelJson: true,
                 approvalRulesJson: true,
                 metadataJson: true
@@ -939,6 +951,37 @@ export class PublicIntakeService {
       education: this.readBoolean(record, "education"),
       joiningDate: this.readBoolean(record, "joiningDate")
     };
+  }
+
+  private readCustomFields(link: LoadedLink): Array<{ key: string; label: string; options: string[] }> {
+    const raw = link.campaign
+      ? link.campaign.customFieldsJson
+      : this.asRecord(link.formSchema).customFields;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((entry) => {
+        const record = this.asRecord(entry);
+        const key = this.normalizeString(record.key);
+        const label = this.normalizeString(record.label);
+        const options = Array.isArray(record.options)
+          ? record.options.map((option) => this.normalizeString(option)).filter(Boolean)
+          : [];
+        return { key, label, options };
+      })
+      .filter((field) => field.key && field.label && field.options.length > 0);
+  }
+
+  private sanitizeCustomFieldValues(link: LoadedLink, values: Record<string, string> | undefined) {
+    if (!values || typeof values !== "object") return {};
+    const fields = this.readCustomFields(link);
+    const sanitized: Record<string, string> = {};
+    for (const field of fields) {
+      const value = this.normalizeString(values[field.key]);
+      if (value && field.options.includes(value)) {
+        sanitized[field.key] = value;
+      }
+    }
+    return sanitized;
   }
 
   private readSubmissionModel(link: LoadedLink) {

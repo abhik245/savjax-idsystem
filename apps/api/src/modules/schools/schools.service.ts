@@ -142,6 +142,7 @@ type NormalizedCampaign = {
   expiresAt: Date;
   targetSegments: NormalizedCampaignSegment[];
   dataSchema: Record<string, unknown>;
+  customFields: Array<{ key: string; label: string; options: string[] }>;
   submissionModel: Record<string, unknown>;
   approvalRules: Record<string, unknown>;
   metadata: Record<string, unknown>;
@@ -602,6 +603,23 @@ export class SchoolsService {
       joiningDate: schema.joiningDate ?? false
     };
 
+    const seenCustomFieldKeys = new Set<string>();
+    const customFields = (dto.customFields || [])
+      .map((field) => {
+        const label = this.normalizeString(field.label);
+        const options = Array.from(
+          new Set((field.options || []).map((option) => this.normalizeString(option)).filter(Boolean))
+        );
+        const baseKey = this.normalizeOptionalString(field.key) || this.slugify(label);
+        return { key: baseKey, label, options };
+      })
+      .filter((field) => field.key && field.label && field.options.length > 0)
+      .filter((field) => {
+        if (seenCustomFieldKeys.has(field.key)) return false;
+        seenCustomFieldKeys.add(field.key);
+        return true;
+      });
+
     const submissionDefaults = descriptor.submissionDefaults;
     const submissionModel = {
       mode: this.normalizeOptionalString(dto.submissionModel?.mode) || submissionDefaults.mode,
@@ -638,6 +656,7 @@ export class SchoolsService {
       expiresAt,
       targetSegments: normalizedSegments,
       dataSchema,
+      customFields,
       submissionModel,
       approvalRules,
       metadata: {
@@ -679,6 +698,7 @@ export class SchoolsService {
           expiresAt: normalized.expiresAt,
           targetSegmentsJson: normalized.targetSegments as unknown as Prisma.InputJsonValue,
           dataSchemaJson: normalized.dataSchema as Prisma.InputJsonValue,
+          customFieldsJson: normalized.customFields as unknown as Prisma.InputJsonValue,
           submissionModelJson: normalized.submissionModel as Prisma.InputJsonValue,
           approvalRulesJson: normalized.approvalRules as Prisma.InputJsonValue,
           metadataJson: normalized.metadata as Prisma.InputJsonValue
@@ -1215,6 +1235,14 @@ export class SchoolsService {
   private normalizeOptionalString(value: unknown) {
     const normalized = this.normalizeString(value);
     return normalized || null;
+  }
+
+  private slugify(value: string) {
+    return value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
   }
 
   private normalizeSegmentValue(value: unknown, allowAll = false) {

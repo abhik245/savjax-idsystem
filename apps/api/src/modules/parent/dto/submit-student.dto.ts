@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Matches, MinLength } from "class-validator";
+import { IsObject, IsOptional, IsString, Matches, MinLength } from "class-validator";
 
 export class SubmitStudentDto {
   @IsString()
@@ -85,6 +85,10 @@ export class SubmitStudentDto {
   @IsOptional()
   @IsString()
   joiningDate?: string;
+
+  @IsOptional()
+  @IsObject()
+  customFieldValues?: Record<string, string>;
 
   @IsOptional()
   @IsString()
