@@ -117,14 +117,20 @@ export class PlatformService {
       where: { photoKey: normalizedKey, deletedAt: null },
       select: { id: true, schoolId: true }
     });
-    if (!student) throw new NotFoundException("Photo asset not found");
-    this.accessControlService.assertSchoolAccess(actor, student.schoolId);
+    const owner =
+      student ||
+      (await this.prisma.staffMember.findFirst({
+        where: { photoKey: normalizedKey, deletedAt: null },
+        select: { id: true, schoolId: true }
+      }));
+    if (!owner) throw new NotFoundException("Photo asset not found");
+    this.accessControlService.assertSchoolAccess(actor, owner.schoolId);
 
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
     const token = await this.jwtService.signAsync(
       {
         asset: normalizedKey,
-        schoolId: student.schoolId,
+        schoolId: owner.schoolId,
         purpose: "ASSET_VIEW"
       },
       {
@@ -137,11 +143,11 @@ export class PlatformService {
       data: {
         actorUserId: actor.sub,
         entityType: "ASSET",
-        entityId: student.id,
+        entityId: owner.id,
         action: "SIGNED_URL_ISSUED",
         newValue: {
           kind: "PHOTO",
-          schoolId: student.schoolId,
+          schoolId: owner.schoolId,
           ttlSeconds
         } as Prisma.InputJsonValue
       }

@@ -1154,6 +1154,11 @@ export default function SchoolDrillPage() {
     window.location.href = url;
   }
 
+  function downloadAllStaffPhotos() {
+    const url = `${apiOrigin}/api/v2/admin/schools/${encodeURIComponent(schoolId)}/staff/photos-zip`;
+    window.location.href = url;
+  }
+
   if (booting || loading.detail) {
     return <SchoolLoader />;
   }
@@ -1604,6 +1609,15 @@ export default function SchoolDrillPage() {
                   >
                     <span className="inline-flex items-center gap-1">
                       <Download size={12} /> {loading.staffExport ? "Preparing..." : "CSV"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadAllStaffPhotos}
+                    className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/20 transition"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <Download size={12} /> Photos ZIP
                     </span>
                   </button>
                 </div>

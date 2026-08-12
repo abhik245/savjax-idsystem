@@ -653,12 +653,14 @@ export class AdminService {
         status: true,
         intakeStage: true,
         createdAt: true,
+        customFieldsJson: true,
         intakeLink: {
           select: {
             campaignName: true,
             campaign: {
               select: {
-                dataSchemaJson: true
+                dataSchemaJson: true,
+                customFieldsJson: true
               }
             }
           }
@@ -713,7 +715,8 @@ export class AdminService {
         ? this.readExportString(payload.emergencyNumber)
         : this.maskPhone(this.readExportString(payload.emergencyNumber));
       const aadhaarNumber = canViewSensitive ? this.readExportString(payload.aadhaarNumber) : "";
-      const prepared = {
+      const customFields = this.readExportCustomFieldValues(row.customFieldsJson);
+      const prepared: Record<string, unknown> = {
         studentId: masked.id,
         campaignName: this.readExportString(payload.campaignName) || row.intakeLink?.campaignName || "",
         segmentLabel:
@@ -739,17 +742,31 @@ export class AdminService {
         photoLink: "",
         photoKey
       };
+      const customFieldDefs = this.readCampaignCustomFieldDefs(row.intakeLink?.campaign?.customFieldsJson);
+      for (const field of customFieldDefs) {
+        prepared[field.key] = customFields[field.key] || "";
+      }
 
-      return { dataSchema, prepared };
+      return { dataSchema, prepared, customFieldDefs };
     });
 
     const selectedDynamicColumns = exportFieldOrder
       .filter((field) => preparedRows.some((row) => row.dataSchema[field]))
       .map((field) => ({ key: field, label: this.studentExportFieldLabel(field) }));
 
+    const customFieldColumns = new Map<string, { key: string; label: string }>();
+    for (const row of preparedRows) {
+      for (const field of row.customFieldDefs) {
+        if (!customFieldColumns.has(field.key)) {
+          customFieldColumns.set(field.key, field);
+        }
+      }
+    }
+
     const columns = [
       ...exportColumns,
       ...selectedDynamicColumns,
+      ...Array.from(customFieldColumns.values()),
       { key: "status", label: "Status" },
       { key: "intakeStage", label: "Intake Stage" },
       { key: "submittedAt", label: "Submitted At" },
@@ -781,14 +798,40 @@ export class AdminService {
       orderBy: { createdAt: "asc" }
     });
 
+    return this.buildPhotosZipStream(school, students, "photos");
+  }
+
+  async buildSchoolStaffPhotosZip(actor: AuthenticatedUser, schoolId: string) {
+    await this.assertSchoolAccess(actor, schoolId);
+
+    const school = await this.prisma.school.findFirst({
+      where: { id: schoolId, deletedAt: null },
+      select: { code: true, name: true }
+    });
+    if (!school) throw new NotFoundException("School not found");
+
+    const staff = await this.prisma.staffMember.findMany({
+      where: { schoolId, deletedAt: null, photoKey: { not: "" } },
+      select: { fullName: true, photoKey: true },
+      orderBy: { createdAt: "asc" }
+    });
+
+    return this.buildPhotosZipStream(school, staff, "staff_photos");
+  }
+
+  private async buildPhotosZipStream(
+    school: { code: string | null; name: string },
+    people: Array<{ fullName: string; photoKey: string | null }>,
+    zipSuffix: string
+  ) {
     const uploadRoot = resolve(process.env.LOCAL_UPLOAD_DIR || join(process.cwd(), "uploads"));
     const normalizedRoot = uploadRoot.endsWith(sep) ? uploadRoot : `${uploadRoot}${sep}`;
-    const zipName = `${(school.code || school.name || "school").replace(/[^a-zA-Z0-9_-]/g, "_")}_photos.zip`;
+    const zipName = `${(school.code || school.name || "school").replace(/[^a-zA-Z0-9_-]/g, "_")}_${zipSuffix}.zip`;
 
     const archive = archiver("zip", { zlib: { level: 1 } });
 
-    for (const student of students) {
-      const photoKey = (student.photoKey || "").trim();
+    for (const person of people) {
+      const photoKey = (person.photoKey || "").trim();
       if (!photoKey.startsWith("local://")) continue;
 
       const relativePath = photoKey.slice("local://".length).replace(/^\/+/, "");
@@ -796,7 +839,7 @@ export class AdminService {
       if (filePath !== uploadRoot && !filePath.startsWith(normalizedRoot)) continue;
 
       const ext = extname(filePath) || ".jpg";
-      const safeName = (student.fullName || "student").trim().replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ").replace(/\s+/g, " ");
+      const safeName = (person.fullName || "person").trim().replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ").replace(/\s+/g, " ");
       const fileName = `${safeName}${ext}`;
 
       try {
@@ -902,9 +945,27 @@ export class AdminService {
         photoKey: true,
         status: true,
         intakeStage: true,
-        createdAt: true
+        createdAt: true,
+        customFieldsJson: true,
+        intakeLink: {
+          select: {
+            campaign: {
+              select: {
+                customFieldsJson: true
+              }
+            }
+          }
+        }
       }
     });
+    const customFieldColumns = new Map<string, { key: string; label: string }>();
+    for (const r of rows) {
+      for (const field of this.readCampaignCustomFieldDefs(r.intakeLink?.campaign?.customFieldsJson)) {
+        if (!customFieldColumns.has(field.key)) {
+          customFieldColumns.set(field.key, field);
+        }
+      }
+    }
     const columns = [
       { key: "staffId", label: "Staff ID" },
       { key: "fullName", label: "Full Name" },
@@ -918,6 +979,7 @@ export class AdminService {
       { key: "mobile", label: "Mobile" },
       { key: "emergencyNumber", label: "Emergency Number" },
       { key: "address", label: "Address" },
+      ...Array.from(customFieldColumns.values()),
       { key: "status", label: "Status" },
       { key: "intakeStage", label: "Intake Stage" },
       { key: "submittedAt", label: "Submitted At" },
@@ -926,24 +988,31 @@ export class AdminService {
     return {
       fileName: `${school.code || school.name}-staff-export`,
       columns,
-      rows: rows.map((r) => ({
-        staffId: r.id,
-        fullName: r.fullName,
-        employeeId: r.employeeId || "",
-        designation: r.designation || "",
-        department: r.department || "",
-        education: r.education || "",
-        joiningDate: r.joiningDate || "",
-        dob: r.dob || "",
-        bloodGroup: r.bloodGroup || "",
-        mobile: r.mobile || "",
-        emergencyNumber: r.emergencyNumber || "",
-        address: r.address || "",
-        status: r.status,
-        intakeStage: r.intakeStage,
-        submittedAt: r.createdAt.toISOString(),
-        photoKey: r.photoKey || ""
-      }))
+      rows: rows.map((r) => {
+        const customFields = this.readExportCustomFieldValues(r.customFieldsJson);
+        const prepared: Record<string, unknown> = {
+          staffId: r.id,
+          fullName: r.fullName,
+          employeeId: r.employeeId || "",
+          designation: r.designation || "",
+          department: r.department || "",
+          education: r.education || "",
+          joiningDate: r.joiningDate || "",
+          dob: r.dob || "",
+          bloodGroup: r.bloodGroup || "",
+          mobile: r.mobile || "",
+          emergencyNumber: r.emergencyNumber || "",
+          address: r.address || "",
+          status: r.status,
+          intakeStage: r.intakeStage,
+          submittedAt: r.createdAt.toISOString(),
+          photoKey: r.photoKey || ""
+        };
+        for (const field of this.readCampaignCustomFieldDefs(r.intakeLink?.campaign?.customFieldsJson)) {
+          prepared[field.key] = customFields[field.key] || "";
+        }
+        return prepared;
+      })
     };
   }
 
@@ -4403,6 +4472,27 @@ export class AdminService {
 
   private readExportBoolean(value: unknown, fallback = false) {
     return typeof value === "boolean" ? value : fallback;
+  }
+
+  private readCampaignCustomFieldDefs(value: unknown): Array<{ key: string; label: string }> {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((entry) => {
+        const record = this.asExportRecord(entry);
+        const key = this.readExportString(record.key);
+        const label = this.readExportString(record.label) || key;
+        return { key, label };
+      })
+      .filter((field) => field.key);
+  }
+
+  private readExportCustomFieldValues(value: unknown): Record<string, string> {
+    const record = this.asExportRecord(value);
+    const result: Record<string, string> = {};
+    for (const [key, fieldValue] of Object.entries(record)) {
+      result[key] = this.readExportString(fieldValue);
+    }
+    return result;
   }
 
   private readStudentExportSchema(

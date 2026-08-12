@@ -287,6 +287,33 @@ export class AdminController {
     return this.adminService.exportSchoolStaff(req.user, schoolId, { q, status });
   }
 
+  @Get("schools/:schoolId/staff/photos-zip")
+  @UseGuards(TenantScopeGuard)
+  @TenantScope({ sources: [{ type: "param", key: "schoolId" }] })
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.COMPANY_ADMIN,
+    Role.OPERATIONS_ADMIN,
+    Role.SALES_PERSON,
+    Role.SALES,
+    Role.PRINTING,
+    Role.SCHOOL_ADMIN,
+    Role.SCHOOL_STAFF
+  )
+  async streamSchoolStaffPhotosZip(
+    @Req() req: AuthRequest,
+    @Param("schoolId") schoolId: string,
+    @Res({ passthrough: true }) res: Response
+  ) {
+    const { stream, zipName } = await this.adminService.buildSchoolStaffPhotosZip(req.user, schoolId);
+    res.set({
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${zipName}"`,
+      "Cache-Control": "private, no-store"
+    });
+    return new StreamableFile(stream);
+  }
+
   @Patch("staff/:staffId")
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(
