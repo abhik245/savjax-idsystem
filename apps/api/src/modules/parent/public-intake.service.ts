@@ -457,10 +457,20 @@ export class PublicIntakeService {
       (isAnonSession || submissionModel.allowMobileEditAfterVerification) && this.normalizeMobile(dto.mobile)
         ? this.normalizeMobile(dto.mobile)
         : verifiedMobile;
+    const sanitizedCustomFieldValues = this.sanitizeCustomFieldValues(link, dto.customFieldValues);
+    const customFieldDefs = this.readCustomFields(link);
+    const classDropdownDef = customFieldDefs.find((field) => /class|grade|standard/i.test(field.label));
+    const sectionDropdownDef = customFieldDefs.find((field) => /section|division/i.test(field.label));
+    const classDropdownValue = classDropdownDef ? sanitizedCustomFieldValues[classDropdownDef.key] : "";
+    const sectionDropdownValue = sectionDropdownDef ? sanitizedCustomFieldValues[sectionDropdownDef.key] : "";
+
     const primaryValue =
-      this.normalizeSegmentValue(dto.segmentPrimaryValue || dto.className) || this.segmentPrimary(link);
+      this.normalizeSegmentValue(dto.segmentPrimaryValue || dto.className) ||
+      this.normalizeSegmentValue(classDropdownValue) ||
+      this.segmentPrimary(link);
     const secondaryValue =
       this.normalizeSegmentValue(dto.segmentSecondaryValue || dto.division || dto.section) ||
+      this.normalizeSegmentValue(sectionDropdownValue) ||
       this.segmentSecondary(link);
     const fullName = this.normalizeString(dto.fullName);
     const parentName =
@@ -537,7 +547,7 @@ export class PublicIntakeService {
         submissionModel.workflowRequired ||
         this.readBoolean(this.asRecord(link.campaign?.approvalRulesJson), "approvalRequired", true);
       const nextStage = workflowRequired ? IntakeSubmissionStage.UNDER_REVIEW : IntakeSubmissionStage.SUBMITTED;
-      const sanitizedStaffCustomFields = this.sanitizeCustomFieldValues(link, dto.customFieldValues);
+      const sanitizedStaffCustomFields = sanitizedCustomFieldValues;
       const staffData = {
         schoolId: link.schoolId,
         intakeLinkId: link.id,
@@ -689,7 +699,7 @@ export class PublicIntakeService {
     const nextStage = workflowRequired ? IntakeSubmissionStage.UNDER_REVIEW : IntakeSubmissionStage.SUBMITTED;
     const rollNumber =
       requestedRollNumber || existing?.rollNumber || (await this.generateRoll(link.id, link.institutionType));
-    const sanitizedStudentCustomFields = this.sanitizeCustomFieldValues(link, dto.customFieldValues);
+    const sanitizedStudentCustomFields = sanitizedCustomFieldValues;
 
     const studentData = {
       schoolId: link.schoolId,
