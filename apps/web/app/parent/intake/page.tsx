@@ -177,7 +177,7 @@ const DEFAULT_CAPTURE_ASSISTANT: CaptureAssistantState = {
 
 const CAPTURE_STABILITY_TARGET = 2;
 const CAMERA_ANALYSIS_INTERVAL_MS = 180;
-const MAX_PRINT_PROCESSING_EDGE = 1400;
+const MAX_PRINT_PROCESSING_EDGE = 2400;
 const MIN_PRINT_EXPORT_EDGE = 600;
 
 export default function ParentIntakePage() {
@@ -772,7 +772,7 @@ function IntakePortalInner() {
     canvas.height = crop.sh;
     ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, crop.sw, crop.sh);
 
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.97);
     stopCamera();
     try {
       await processSelectedPhoto(dataUrl);
@@ -1808,7 +1808,7 @@ function applyFaceRetouch(dataUrl: string): Promise<string> {
 
       ctx.putImageData(new ImageData(out, W, H), 0, 0);
       // JPEG 0.91 — ~30% smaller than 0.95, no visible quality difference at 4K
-      resolve(canvas.toDataURL("image/jpeg", 0.91));
+      resolve(canvas.toDataURL("image/jpeg", 0.96));
     };
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
@@ -1859,7 +1859,7 @@ async function enhancePhotoForPrint(dataUrl: string, backgroundPreference: strin
   const shorterEdge = Math.min(width, height);
   const exportScale = shorterEdge < MIN_PRINT_EXPORT_EDGE ? MIN_PRINT_EXPORT_EDGE / shorterEdge : 1;
   if (exportScale <= 1) {
-    return sourceCanvas.toDataURL("image/jpeg", 0.94);
+    return sourceCanvas.toDataURL("image/jpeg", 0.97);
   }
 
   const exportCanvas = document.createElement("canvas");
@@ -1867,13 +1867,13 @@ async function enhancePhotoForPrint(dataUrl: string, backgroundPreference: strin
   exportCanvas.height = Math.round(height * exportScale);
   const exportCtx = exportCanvas.getContext("2d");
   if (!exportCtx) {
-    return sourceCanvas.toDataURL("image/jpeg", 0.94);
+    return sourceCanvas.toDataURL("image/jpeg", 0.97);
   }
 
   exportCtx.imageSmoothingEnabled = true;
   exportCtx.imageSmoothingQuality = "high";
   exportCtx.drawImage(sourceCanvas, 0, 0, exportCanvas.width, exportCanvas.height);
-  return exportCanvas.toDataURL("image/jpeg", 0.94);
+  return exportCanvas.toDataURL("image/jpeg", 0.97);
 }
 
 function samplePlainBackground(data: Uint8ClampedArray, width: number, height: number) {
@@ -1994,25 +1994,31 @@ function colorDistance(
   return Math.sqrt(dr * dr + dg * dg + db * db);
 }
 
+function smoothstep(t: number) {
+  const clamped = Math.min(1, Math.max(0, t));
+  return clamped * clamped * (3 - 2 * clamped);
+}
+
 function edgeBlendWeight(x: number, y: number, width: number, height: number) {
   const left = x / width;
   const right = (width - x) / width;
   const top = y / height;
   const bottom = (height - y) / height;
   const nearestEdge = Math.min(left, right, top, bottom);
-  if (nearestEdge <= 0.12) return 1;
-  if (nearestEdge <= 0.2) return 0.82;
-  if (nearestEdge <= 0.28) return 0.58;
-  return 0.28;
+  // Continuous falloff (no discrete rings): full strength right at the edge,
+  // fading smoothly further in, instead of jumping between fixed bands.
+  const t = 1 - smoothstep((nearestEdge - 0.12) / 0.16);
+  return 0.28 + t * 0.72;
 }
 
 function centerProtectionWeight(x: number, y: number, width: number, height: number) {
   const nx = (x - width / 2) / (width * 0.28);
   const ny = (y - height / 2) / (height * 0.34);
   const ellipse = nx * nx + ny * ny;
-  if (ellipse <= 0.72) return 0.08;
-  if (ellipse <= 1.15) return 0.28;
-  return 1;
+  // Continuous falloff across the protection boundary — avoids the hard
+  // elliptical ring a stepped function bakes into the photo.
+  const t = smoothstep((ellipse - 0.72) / 0.43);
+  return 0.08 + t * 0.92;
 }
 
 function blendTowardsWhite(value: number, blend: number) {
