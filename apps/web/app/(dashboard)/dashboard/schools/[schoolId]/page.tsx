@@ -426,12 +426,14 @@ export default function SchoolDrillPage() {
   const [classFilter, setClassFilter] = useState("");
   const [studentQuery, setStudentQuery] = useState("");
   const [studentStatus, setStudentStatus] = useState<StudentStatus | "">("");
+  const [studentLinkFilter, setStudentLinkFilter] = useState("");
   const [studentsPage, setStudentsPage] = useState(1);
   const [selectedStudent, setSelectedStudent] = useState<SchoolDetailStudent | null>(null);
 
   const [staff, setStaff] = useState<SchoolStaffListResponse | null>(null);
   const [staffQuery, setStaffQuery] = useState("");
   const [staffStatus, setStaffStatus] = useState<StudentStatus | "">("");
+  const [staffLinkFilter, setStaffLinkFilter] = useState("");
   const [staffPage, setStaffPage] = useState(1);
 
   const [campaigns, setCampaigns] = useState<IntakeCampaignRow[]>([]);
@@ -472,6 +474,18 @@ export default function SchoolDrillPage() {
     () => (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"),
     []
   );
+  const intakeLinkOptions = useMemo(
+    () =>
+      campaigns.flatMap((campaign) =>
+        campaign.links.map((link) => ({
+          id: link.id,
+          label: `${campaign.name} — ${link.segmentLabel || link.className || "Link"} (${new Date(
+            link.createdAt
+          ).toLocaleDateString()})`
+        }))
+      ),
+    [campaigns]
+  );
   const validCampaigns = useMemo(
     () =>
       campaigns.filter((campaign) =>
@@ -504,11 +518,15 @@ export default function SchoolDrillPage() {
     if (tab === "students") void loadStudents(studentsPage);
     if (tab === "staff") void loadStaff(staffPage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studentsPage, studentStatus, classFilter, staffPage, staffStatus, tab]);
+  }, [studentsPage, studentStatus, classFilter, studentLinkFilter, staffPage, staffStatus, staffLinkFilter, tab]);
 
   useEffect(() => {
     setStudentsPage(1);
-  }, [studentStatus, classFilter]);
+  }, [studentStatus, classFilter, studentLinkFilter]);
+
+  useEffect(() => {
+    setStaffPage(1);
+  }, [staffStatus, staffLinkFilter]);
 
   useEffect(() => {
     if (!schoolId || booting) return;
@@ -670,6 +688,7 @@ export default function SchoolDrillPage() {
       if (studentQuery.trim()) q.set("q", studentQuery.trim());
       if (studentStatus) q.set("status", studentStatus);
       if (classFilter) q.set("className", classFilter);
+      if (studentLinkFilter) q.set("intakeLinkId", studentLinkFilter);
       const res = await apiRequest<SchoolStudentListResponse>(
         `/admin/schools/${encodeURIComponent(schoolId)}/students?${q.toString()}`
       );
@@ -739,6 +758,7 @@ export default function SchoolDrillPage() {
       q.set("pageSize", "20");
       if (staffQuery.trim()) q.set("q", staffQuery.trim());
       if (staffStatus) q.set("status", staffStatus);
+      if (staffLinkFilter) q.set("intakeLinkId", staffLinkFilter);
       const res = await apiRequest<SchoolStaffListResponse>(
         `/admin/schools/${encodeURIComponent(schoolId)}/staff?${q.toString()}`
       );
@@ -784,6 +804,7 @@ export default function SchoolDrillPage() {
       const query = new URLSearchParams();
       if (staffQuery.trim()) query.set("q", staffQuery.trim());
       if (staffStatus) query.set("status", staffStatus);
+      if (staffLinkFilter) query.set("intakeLinkId", staffLinkFilter);
       const exportData = await apiRequest<{ fileName: string; columns: Array<{ key: string; label: string }>; rows: Array<Record<string, string>> }>(
         `/admin/schools/${encodeURIComponent(schoolId)}/staff/export${query.toString() ? `?${query.toString()}` : ""}`
       );
@@ -1102,6 +1123,7 @@ export default function SchoolDrillPage() {
       if (studentQuery.trim()) query.set("q", studentQuery.trim());
       if (studentStatus) query.set("status", studentStatus);
       if (classFilter.trim()) query.set("className", classFilter.trim());
+      if (studentLinkFilter) query.set("intakeLinkId", studentLinkFilter);
 
       const exportData = await apiRequest<StudentExportResponse>(
         `/admin/schools/${encodeURIComponent(schoolId)}/students/export${query.toString() ? `?${query.toString()}` : ""}`
@@ -1439,6 +1461,18 @@ export default function SchoolDrillPage() {
                         </option>
                       ))}
                   </select>
+                  <select
+                    value={studentLinkFilter}
+                    onChange={(e) => setStudentLinkFilter(e.target.value)}
+                    className="rounded-lg border border-[var(--line-soft)] bg-[var(--surface-strong)] px-2 py-1 text-xs outline-none"
+                  >
+                    <option value="">All Links</option>
+                    {intakeLinkOptions.map((link) => (
+                      <option key={link.id} value={link.id}>
+                        {link.label}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
                     onClick={() => {
@@ -1592,6 +1626,18 @@ export default function SchoolDrillPage() {
                     <option value="">All Status</option>
                     {WORKFLOW_STATUSES.map((st) => (
                       <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={staffLinkFilter}
+                    onChange={(e) => setStaffLinkFilter(e.target.value)}
+                    className="rounded-lg border border-[var(--line-soft)] bg-[var(--surface-strong)] px-2 py-1 text-xs outline-none"
+                  >
+                    <option value="">All Links</option>
+                    {intakeLinkOptions.map((link) => (
+                      <option key={link.id} value={link.id}>
+                        {link.label}
+                      </option>
                     ))}
                   </select>
                   <button

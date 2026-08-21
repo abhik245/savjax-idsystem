@@ -168,10 +168,18 @@ export class AdminController {
     @Query("q") q?: string,
     @Query("status", new ParseEnumPipe(StudentStatus, { optional: true })) status?: StudentStatus,
     @Query("className") className?: string,
+    @Query("intakeLinkId") intakeLinkId?: string,
     @Query("page") page?: number,
     @Query("pageSize") pageSize?: number
   ) {
-    return this.adminService.listSchoolStudents(req.user, schoolId, { q, status, className, page, pageSize });
+    return this.adminService.listSchoolStudents(req.user, schoolId, {
+      q,
+      status,
+      className,
+      intakeLinkId,
+      page,
+      pageSize
+    });
   }
 
   @Get("schools/:schoolId/students/export")
@@ -192,9 +200,10 @@ export class AdminController {
     @Param("schoolId") schoolId: string,
     @Query("q") q?: string,
     @Query("status", new ParseEnumPipe(StudentStatus, { optional: true })) status?: StudentStatus,
-    @Query("className") className?: string
+    @Query("className") className?: string,
+    @Query("intakeLinkId") intakeLinkId?: string
   ) {
-    return this.adminService.exportSchoolStudents(req.user, schoolId, { q, status, className });
+    return this.adminService.exportSchoolStudents(req.user, schoolId, { q, status, className, intakeLinkId });
   }
 
   @Get("schools/:schoolId/students/photos-zip")
@@ -259,10 +268,11 @@ export class AdminController {
     @Param("schoolId") schoolId: string,
     @Query("q") q?: string,
     @Query("status", new ParseEnumPipe(StudentStatus, { optional: true })) status?: StudentStatus,
+    @Query("intakeLinkId") intakeLinkId?: string,
     @Query("page") page?: number,
     @Query("pageSize") pageSize?: number
   ) {
-    return this.adminService.listSchoolStaff(req.user, schoolId, { q, status, page, pageSize });
+    return this.adminService.listSchoolStaff(req.user, schoolId, { q, status, intakeLinkId, page, pageSize });
   }
 
   @Get("schools/:schoolId/staff/export")
@@ -282,9 +292,10 @@ export class AdminController {
     @Req() req: AuthRequest,
     @Param("schoolId") schoolId: string,
     @Query("q") q?: string,
-    @Query("status", new ParseEnumPipe(StudentStatus, { optional: true })) status?: StudentStatus
+    @Query("status", new ParseEnumPipe(StudentStatus, { optional: true })) status?: StudentStatus,
+    @Query("intakeLinkId") intakeLinkId?: string
   ) {
-    return this.adminService.exportSchoolStaff(req.user, schoolId, { q, status });
+    return this.adminService.exportSchoolStaff(req.user, schoolId, { q, status, intakeLinkId });
   }
 
   @Get("schools/:schoolId/staff/photos-zip")

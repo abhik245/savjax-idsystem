@@ -77,7 +77,14 @@ import { mkdir, stat, writeFile } from "fs/promises";
 import { join, resolve, sep, extname } from "path";
 import archiver = require("archiver");
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-type StudentQuery = { q?: string; status?: StudentStatus; className?: string; page?: number; pageSize?: number };
+type StudentQuery = {
+  q?: string;
+  status?: StudentStatus;
+  className?: string;
+  page?: number;
+  pageSize?: number;
+  intakeLinkId?: string;
+};
 type ReportQuery = {
   schoolId?: string;
   dateFrom?: string;
@@ -858,6 +865,7 @@ export class AdminService {
     const where: Prisma.StudentWhereInput = { schoolId, deletedAt: null };
     if (query.status) where.status = query.status;
     if (query.className?.trim()) where.className = query.className.trim().toUpperCase();
+    if (query.intakeLinkId?.trim()) where.intakeLinkId = query.intakeLinkId.trim();
     if (query.q?.trim()) {
       const text = query.q.trim();
       where.OR = [
@@ -874,6 +882,7 @@ export class AdminService {
     const pageSize = Math.min(Math.max(Number(query.pageSize || 20), 1), 200);
     const where: Prisma.StaffMemberWhereInput = { schoolId, deletedAt: null };
     if (query.status) where.status = query.status;
+    if (query.intakeLinkId?.trim()) where.intakeLinkId = query.intakeLinkId.trim();
     if (query.q?.trim()) {
       const text = query.q.trim();
       where.OR = [
@@ -918,6 +927,7 @@ export class AdminService {
     if (!school) throw new NotFoundException("School not found");
     const where: Prisma.StaffMemberWhereInput = { schoolId, deletedAt: null };
     if (query.status) where.status = query.status;
+    if (query.intakeLinkId?.trim()) where.intakeLinkId = query.intakeLinkId.trim();
     if (query.q?.trim()) {
       const text = query.q.trim();
       where.OR = [

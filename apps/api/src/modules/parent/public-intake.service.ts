@@ -1160,17 +1160,6 @@ export class PublicIntakeService {
   }
 
   private buildStudentDuplicateWhere(link: LoadedLink, duplicateKey: string): Prisma.StudentWhereInput {
-    if (link.campaignId) {
-      return {
-        deletedAt: null,
-        duplicateKey,
-        intakeLink: {
-          is: {
-            campaignId: link.campaignId
-          }
-        }
-      };
-    }
     return {
       deletedAt: null,
       duplicateKey,
