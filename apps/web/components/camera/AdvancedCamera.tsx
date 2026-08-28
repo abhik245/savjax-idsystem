@@ -3,7 +3,7 @@
 /**
  * AdvancedCamera — AI-guided face capture
  *
- * StudioGrade v2, step 1:
+ * StudioGrade v3, task 1:
  * ─ Captures at the device's actual sensor resolution (ImageCapture.takePhoto()
  *   where supported, else the highest negotiated getUserMedia track size) —
  *   no more hard-resize to a fixed 720×960 canvas.
@@ -11,10 +11,16 @@
  * ─ Defaults to the rear camera (front cameras on budget Android devices are
  *   dramatically worse for this use case).
  * ─ Real face detection via MediaPipe FaceLandmarker (WASM, served locally
- *   from /public/mediapipe — not a CDN), replacing the old brightness-blob
- *   heuristic. Adds pose (yaw/pitch/roll), eyes-open, and highlight-clipping
- *   checks on top of the existing lighting/sharpness/stillness/background
- *   signals.
+ *   from /public/mediapipe — not a CDN). There is NO heuristic fallback: if
+ *   the model fails to load, capture is disabled and an error is shown. A
+ *   detector that can pass a keyboard is worse than no detector at all.
+ * ─ All checks are derived from the 478 landmarks, not pixel brightness on a
+ *   fixed sample rectangle: exactly-one-face gate (min detection confidence
+ *   0.7), pose from the facial transformation matrix (±15° yaw / ±12° pitch
+ *   / ±10° roll), eyes-open via eye-aspect-ratio on the eyelid landmarks,
+ *   light/sharpness/highlight-clipping sampled only inside the face-oval
+ *   landmark hull (not the whole frame), and stillness from landmark
+ *   centroid variance across the last 5 frames.
  * ─ Same guidance cadence, hold-steady auto-capture, and visual design as
  *   before.
  */
@@ -70,9 +76,28 @@ const STABLE_NEEDED = 24; // ~3 s at 8 fps analysis
 const ANALYSIS_INTERVAL_MS = 125; // 8 fps
 const OVAL_W = 0.58; // fraction of video width
 const OVAL_H = 0.74; // fraction of video height
-const MAX_POSE_DEG = 15;
-const HIGHLIGHT_CLIP_LIMIT = 0.1; // 10% of face pixels near-white → flag
-const EYE_BLINK_THRESHOLD = 0.5; // blendshape score above this = eye closed
+const MAX_YAW_DEG = 15;
+const MAX_PITCH_DEG = 12;
+const MAX_ROLL_DEG = 10;
+const HIGHLIGHT_CLIP_LIMIT = 0.12; // >12% of face-hull pixels near-white → flag
+const EAR_CLOSED_THRESHOLD = 0.2; // eye-aspect-ratio below this = eyes closed
+const CENTROID_HISTORY_LEN = 5;
+const CENTROID_STILL_VARIANCE_LIMIT = 4; // px^2, on a ~720-wide analysis frame
+const MIN_FACE_DETECTION_CONFIDENCE = 0.7;
+
+// MediaPipe's published FACEMESH_FACE_OVAL index set — the boundary contour
+// used to build the face-hull polygon that light/sharpness/highlight
+// sampling is restricted to (never the whole frame, never a fixed rectangle
+// that can be centered on background instead of a face).
+const FACE_OVAL_INDICES = [
+  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150,
+  136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109
+];
+
+// Standard 6-point eye contour subsets (outer corner, 2x upper lid, inner
+// corner, 2x lower lid) used for the Soukupová & Čech eye-aspect-ratio.
+const RIGHT_EYE_EAR_INDICES = [33, 160, 158, 133, 153, 144];
+const LEFT_EYE_EAR_INDICES = [362, 385, 387, 263, 373, 380];
 
 const DEFAULT_QUALITY: Quality = {
   face: false,
@@ -104,11 +129,17 @@ function getFaceLandmarker(): Promise<FaceLandmarkerType> {
       return FaceLandmarker.createFromOptions(fileset, {
         baseOptions: {
           modelAssetPath: "/mediapipe/face_landmarker.task",
-          delegate: "GPU"
+          // CPU delegate: slower than GPU but far more reliably available
+          // across Safari/iOS and older Android WebViews. A detector that
+          // silently fails to init on some devices (a known GPU-delegate
+          // risk) is exactly the failure mode this rewrite exists to remove.
+          delegate: "CPU"
         },
         runningMode: "VIDEO",
         numFaces: 2, // detect up to 2 so we can flag "multiple faces" rather than just picking one
-        outputFaceBlendshapes: true,
+        minFaceDetectionConfidence: MIN_FACE_DETECTION_CONFIDENCE,
+        minFacePresenceConfidence: MIN_FACE_DETECTION_CONFIDENCE,
+        outputFaceBlendshapes: false,
         outputFacialTransformationMatrixes: true
       });
     })();
@@ -130,12 +161,12 @@ export default function AdvancedCamera({
   const streamRef = useRef<MediaStream | null>(null);
   const imageCaptureRef = useRef<any>(null);
   const rafRef = useRef(0);
-  const prevDataRef = useRef<Uint8ClampedArray | null>(null);
   const stableRef = useRef(0);
   const capturedRef = useRef(false);
   const lastAnalysisRef = useRef(0);
   const landmarkerRef = useRef<FaceLandmarkerType | null>(null);
-  const landmarkerErrorRef = useRef(false);
+  const landmarkerStatusRef = useRef<"loading" | "ready" | "error">("loading");
+  const centroidHistoryRef = useRef<Array<{ x: number; y: number }>>([]);
 
   const [facing, setFacing] = useState<"user" | "environment">("environment");
   const [ready, setReady] = useState(false);
@@ -146,6 +177,9 @@ export default function AdvancedCamera({
   const [countdown, setCountdown] = useState<number | null>(null);
   const [achievedResolution, setAchievedResolution] = useState<{ width: number; height: number } | null>(null);
   const [quality, setQuality] = useState<Quality>(DEFAULT_QUALITY);
+  // No heuristic fallback exists — while "loading", capture stays disabled;
+  // on "error", capture stays disabled and an explicit error is shown.
+  const [landmarkerStatus, setLandmarkerStatus] = useState<"loading" | "ready" | "error">("loading");
 
   // ── MediaPipe warm-up (starts loading as soon as the component mounts) ───
 
@@ -153,11 +187,14 @@ export default function AdvancedCamera({
     getFaceLandmarker()
       .then((lm) => {
         landmarkerRef.current = lm;
+        landmarkerStatusRef.current = "ready";
+        setLandmarkerStatus("ready");
       })
       .catch((e) => {
-        landmarkerErrorRef.current = true;
+        landmarkerStatusRef.current = "error";
+        setLandmarkerStatus("error");
         // eslint-disable-next-line no-console
-        console.warn("MediaPipe FaceLandmarker failed to load; falling back to lighting-only guidance.", e);
+        console.error("MediaPipe FaceLandmarker failed to load. Capture is disabled — there is no fallback detector.", e);
       });
   }, []);
 
@@ -170,7 +207,7 @@ export default function AdvancedCamera({
     imageCaptureRef.current = null;
     stableRef.current = 0;
     capturedRef.current = false;
-    prevDataRef.current = null;
+    centroidHistoryRef.current = [];
     setReady(false);
     setCountdown(null);
     setTorchOn(false);
@@ -388,86 +425,57 @@ export default function AdvancedCamera({
       const oX = (W - oW) / 2;
       const oY = (H - oH) / 2;
 
-      // Sample rectangle inscribed in oval (inner 70%) for brightness/sharpness/motion.
-      const sX = Math.round(oX + oW * 0.15);
-      const sY = Math.round(oY + oH * 0.1);
-      const sW = Math.round(oW * 0.7);
-      const sH = Math.round(oH * 0.8);
-
-      let frame: ImageData;
+      // Background uniformity — sample the four frame corners, well outside
+      // the oval, independent of whether a face is even present.
+      let backgroundOk = true;
       try {
-        frame = overlayCtx.getImageData(sX, sY, sW, sH);
+        const bgVariance = sampleBackgroundVariance(overlayCtx, W, H);
+        backgroundOk = bgVariance < 2600;
       } catch {
+        backgroundOk = true;
+      }
+
+      // No landmarker available (still loading, or failed to load) — do NOT
+      // fall through to any heuristic. Every check reads as not-passing, so
+      // the stability gate (and the disabled capture button) simply never
+      // lets a capture happen.
+      if (landmarkerRef.current === null) {
+        setQuality({
+          ...DEFAULT_QUALITY,
+          message:
+            landmarkerStatusRef.current === "error" ? "Face detection failed to load. Capture disabled." : "Loading face detection…"
+        });
+        stableRef.current = 0;
+        setCountdown(null);
+        drawOverlay(overlayCtx, W, H, DEFAULT_QUALITY, 0);
         return;
       }
-      const d = frame.data;
-      const n = d.length / 4;
-
-      let lumSum = 0;
-      for (let i = 0; i < d.length; i += 4) lumSum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      const avgLum = lumSum / n;
-      const light = avgLum > 65 && avgLum < 225;
-
-      let edge = 0;
-      for (let r = 1; r < sH - 1; r++) {
-        for (let c = 1; c < sW - 1; c++) {
-          const i = (r * sW + c) * 4;
-          for (let ch = 0; ch < 3; ch++) {
-            const gx = d[(r * sW + c + 1) * 4 + ch] - d[(r * sW + c - 1) * 4 + ch];
-            const gy = d[((r + 1) * sW + c) * 4 + ch] - d[((r - 1) * sW + c) * 4 + ch];
-            edge += gx * gx + gy * gy;
-          }
-        }
-      }
-      const sharp = edge / n > 120;
-
-      let motion = 0;
-      if (prevDataRef.current && prevDataRef.current.length === d.length) {
-        const p = prevDataRef.current;
-        for (let i = 0; i < d.length; i += 4) motion += Math.abs(d[i] - p[i]) + Math.abs(d[i + 1] - p[i + 1]) + Math.abs(d[i + 2] - p[i + 2]);
-        motion /= n * 3;
-      }
-      prevDataRef.current = new Uint8ClampedArray(d);
-      const still = motion < 20;
-
-      // Background uniformity — sample the corners, outside the oval.
-      const bgVariance = sampleBackgroundVariance(d, sW, sH, oW / W, oH / H);
-      const backgroundOk = bgVariance < 2600;
 
       let landmarkResult: ReturnType<FaceLandmarkerType["detectForVideo"]> | null = null;
-      if (landmarkerRef.current && !landmarkerErrorRef.current) {
-        try {
-          landmarkResult = landmarkerRef.current.detectForVideo(videoEl, performance.now());
-        } catch {
-          landmarkResult = null;
-        }
+      try {
+        landmarkResult = landmarkerRef.current.detectForVideo(videoEl, performance.now());
+      } catch (e) {
+        // Transient per-frame failure: treat as "no face detected" for this
+        // frame only (safe/red), never as a pass.
+        // eslint-disable-next-line no-console
+        console.warn("[AdvancedCamera] detectForVideo failed for this frame", e);
+        landmarkResult = null;
       }
 
-      let newQ: Quality;
-      if (landmarkResult) {
-        newQ = evaluateLandmarks(landmarkResult, W, H, isMirrored, oX, oY, oW, oH, light, sharp, still, backgroundOk, overlayCtx, stableRef.current);
-      } else {
-        // MediaPipe unavailable (load failed / still warming up) — fall back
-        // to the lighting-only signal so the UI isn't stuck on "Starting…".
-        const face = avgLum > 75 && avgLum < 210 && light;
-        newQ = {
-          ...DEFAULT_QUALITY,
-          face,
-          singleFace: true,
-          light,
-          sharp,
-          still,
-          centered: face,
-          distance: face,
-          eyesOpen: true,
-          poseOk: true,
-          highlightsOk: true,
-          score: (face ? 25 : 0) + (light ? 25 : 0) + (sharp ? 25 : 0) + (still ? 25 : 0),
-          message: landmarkerErrorRef.current
-            ? "Position your face inside the oval"
-            : "Loading face guidance…"
-        };
-      }
+      const newQ = evaluateLandmarks(
+        landmarkResult,
+        W,
+        H,
+        isMirrored,
+        oX,
+        oY,
+        oW,
+        oH,
+        backgroundOk,
+        overlayCtx,
+        stableRef.current,
+        centroidHistoryRef.current
+      );
 
       setQuality(newQ);
 
@@ -645,6 +653,21 @@ export default function AdvancedCamera({
           </div>
         )}
 
+        {!error && landmarkerStatus === "error" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur p-6 text-center rounded-3xl z-20">
+            <AlertCircle className="text-red-400 w-10 h-10" />
+            <p className="text-white text-sm leading-relaxed">
+              Face detection failed to load. Capture is disabled — check your connection and try again.
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-1 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition"
+            >
+              Reload
+            </button>
+          </div>
+        )}
+
         <div className="absolute top-3 right-3 flex gap-2 z-10">
           {facing === "environment" && torchSupported && (
             <button
@@ -727,13 +750,13 @@ export default function AdvancedCamera({
       <div className="flex gap-3 w-full max-w-sm">
         <button
           onClick={() => {
-            if (ready) void doCapture();
+            if (ready && landmarkerStatus === "ready") void doCapture();
           }}
-          disabled={!ready}
+          disabled={!ready || landmarkerStatus !== "ready"}
           className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl
             font-semibold text-sm transition-all shadow-lg active:scale-95
             ${
-              !ready
+              !ready || landmarkerStatus !== "ready"
                 ? "bg-white/10 text-gray-500 cursor-not-allowed"
                 : allGood
                   ? "bg-green-500 hover:bg-green-400 text-white shadow-green-500/30"
@@ -741,7 +764,7 @@ export default function AdvancedCamera({
             }`}
         >
           <Camera className="w-4 h-4" />
-          {allGood ? "Capture Now" : "Capture"}
+          {landmarkerStatus === "loading" ? "Loading…" : landmarkerStatus === "error" ? "Unavailable" : allGood ? "Capture Now" : "Capture"}
         </button>
 
         <button
@@ -764,7 +787,10 @@ export default function AdvancedCamera({
 // ── Landmark-based analysis ──────────────────────────────────────────────────
 
 function evaluateLandmarks(
-  result: { faceLandmarks: Array<Array<{ x: number; y: number; z: number }>>; faceBlendshapes?: Array<{ categories: Array<{ categoryName: string; score: number }> }>; facialTransformationMatrixes?: Array<{ data: Float32Array | number[] }> },
+  result: {
+    faceLandmarks: Array<Array<{ x: number; y: number; z: number }>>;
+    facialTransformationMatrixes?: Array<{ data: Float32Array | number[] }>;
+  } | null,
   W: number,
   H: number,
   mirrored: boolean,
@@ -772,24 +798,23 @@ function evaluateLandmarks(
   oY: number,
   oW: number,
   oH: number,
-  light: boolean,
-  sharp: boolean,
-  still: boolean,
   backgroundOk: boolean,
   ctx: CanvasRenderingContext2D,
-  stableCount: number
+  stableCount: number,
+  centroidHistory: Array<{ x: number; y: number }>
 ): Quality {
-  const faces = result.faceLandmarks || [];
-  const singleFace = faces.length <= 1;
+  const faces = result?.faceLandmarks || [];
+  const singleFace = faces.length === 1;
   const face = faces.length >= 1;
 
-  if (!face) {
+  if (!face || !singleFace) {
+    // Zero faces, or more than one — both are a hard "not ready" state, not
+    // a partial pass. Clear stillness history so we don't average across a
+    // gap where nothing was tracked.
+    centroidHistory.length = 0;
     return {
       ...DEFAULT_QUALITY,
-      light,
-      sharp,
-      still,
-      message: "Face not detected. Move the face into the oval."
+      message: faces.length > 1 ? "Only one person should be in frame." : "Face not detected. Move the face into the oval."
     };
   }
 
@@ -800,17 +825,23 @@ function evaluateLandmarks(
   const mapX = (nx: number) => (mirrored ? (1 - nx) * W : nx * W);
   const mapY = (ny: number) => ny * H;
 
+  // Face-oval hull polygon (mapped points) — light/sharpness/highlight
+  // sampling is restricted to inside this polygon, never a fixed rectangle
+  // that could be centred on background instead of a face.
+  const hull = FACE_OVAL_INDICES.map((idx) => {
+    const p = points[idx];
+    return { x: mapX(p.x), y: mapY(p.y) };
+  });
+
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
-  for (const p of points) {
-    const px = mapX(p.x);
-    const py = mapY(p.y);
-    if (px < minX) minX = px;
-    if (px > maxX) maxX = px;
-    if (py < minY) minY = py;
-    if (py > maxY) maxY = py;
+  for (const p of hull) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
   }
   const faceW = maxX - minX;
   const faceH = maxY - minY;
@@ -823,47 +854,60 @@ function evaluateLandmarks(
   const heightFraction = faceH / oH;
   const distance = heightFraction > 0.45 && heightFraction < 0.95;
 
-  // Eyes-open via blendshapes (eyeBlinkLeft/Right — higher score = more closed).
-  let eyesOpen = true;
-  const blend = result.faceBlendshapes?.[0]?.categories;
-  if (blend) {
-    const blinkLeft = blend.find((c) => c.categoryName === "eyeBlinkLeft")?.score ?? 0;
-    const blinkRight = blend.find((c) => c.categoryName === "eyeBlinkRight")?.score ?? 0;
-    eyesOpen = blinkLeft < EYE_BLINK_THRESHOLD && blinkRight < EYE_BLINK_THRESHOLD;
-  }
+  // Eyes-open via eye-aspect-ratio (Soukupová & Čech) on the eyelid landmarks.
+  const earLeft = eyeAspectRatio(points, LEFT_EYE_EAR_INDICES, mapX, mapY);
+  const earRight = eyeAspectRatio(points, RIGHT_EYE_EAR_INDICES, mapX, mapY);
+  const eyesOpen = earLeft > EAR_CLOSED_THRESHOLD && earRight > EAR_CLOSED_THRESHOLD;
 
-  // Head pose from the facial transformation matrix, if available.
-  let poseOk = true;
-  const matrix = result.facialTransformationMatrixes?.[0]?.data;
+  // Head pose from the facial transformation matrix.
+  let poseOk = false;
+  const matrix = result?.facialTransformationMatrixes?.[0]?.data;
   if (matrix && matrix.length >= 16) {
     const { yaw, pitch, roll } = eulerAnglesFromMatrix(matrix);
-    poseOk = Math.abs(yaw) <= MAX_POSE_DEG && Math.abs(pitch) <= MAX_POSE_DEG && Math.abs(roll) <= MAX_POSE_DEG;
+    poseOk = Math.abs(yaw) <= MAX_YAW_DEG && Math.abs(pitch) <= MAX_PITCH_DEG && Math.abs(roll) <= MAX_ROLL_DEG;
   }
 
-  // Highlight clipping within the face bounding box.
+  // Light / sharpness / highlight-clipping — sampled only inside the face
+  // hull polygon, cropped to its bounding box.
+  const fx = Math.max(0, Math.floor(minX));
+  const fy = Math.max(0, Math.floor(minY));
+  const fw = Math.min(W - fx, Math.ceil(faceW));
+  const fh = Math.min(H - fy, Math.ceil(faceH));
+  let light = false;
+  let sharp = false;
   let highlightsOk = true;
-  try {
-    const fx = Math.max(0, Math.round(minX));
-    const fy = Math.max(0, Math.round(minY));
-    const fw = Math.min(W - fx, Math.round(faceW));
-    const fh = Math.min(H - fy, Math.round(faceH));
-    if (fw > 4 && fh > 4) {
-      const faceData = ctx.getImageData(fx, fy, fw, fh).data;
-      let clipped = 0;
-      const total = faceData.length / 4;
-      for (let i = 0; i < faceData.length; i += 4) {
-        if (faceData[i] >= 250 && faceData[i + 1] >= 250 && faceData[i + 2] >= 250) clipped++;
-      }
-      highlightsOk = clipped / total < HIGHLIGHT_CLIP_LIMIT;
+  if (fw > 4 && fh > 4) {
+    try {
+      const hullMetrics = sampleFaceHullMetrics(ctx, fx, fy, fw, fh, hull);
+      light = hullMetrics.avgLuma > 65 && hullMetrics.avgLuma < 225;
+      sharp = hullMetrics.laplacianVariance > 60;
+      highlightsOk = hullMetrics.clippedFraction < HIGHLIGHT_CLIP_LIMIT;
+    } catch {
+      // getImageData can throw on a tainted/cross-origin canvas; treat as
+      // "can't tell" rather than a false pass.
+      light = false;
+      sharp = false;
+      highlightsOk = true;
     }
-  } catch {
-    highlightsOk = true;
   }
 
-  const allGood = face && singleFace && light && sharp && still && centered && distance && eyesOpen && poseOk && highlightsOk && backgroundOk;
+  // Stillness from landmark centroid variance across the last N frames —
+  // tracks the actual face position, not generic frame noise.
+  centroidHistory.push({ x: faceCx, y: faceCy });
+  while (centroidHistory.length > CENTROID_HISTORY_LEN) centroidHistory.shift();
+  let still = false;
+  if (centroidHistory.length >= CENTROID_HISTORY_LEN) {
+    const meanX = centroidHistory.reduce((s, p) => s + p.x, 0) / centroidHistory.length;
+    const meanY = centroidHistory.reduce((s, p) => s + p.y, 0) / centroidHistory.length;
+    const variance =
+      centroidHistory.reduce((s, p) => s + (p.x - meanX) ** 2 + (p.y - meanY) ** 2, 0) / centroidHistory.length;
+    still = variance < CENTROID_STILL_VARIANCE_LIMIT;
+  }
+
+  const allGood = light && sharp && still && centered && distance && eyesOpen && poseOk && highlightsOk && backgroundOk;
   const score =
-    (face ? 10 : 0) +
-    (singleFace ? 10 : 0) +
+    10 + // exactly one face, confirmed above
+    10 + // single face
     (centered ? 15 : 0) +
     (distance ? 15 : 0) +
     (light ? 15 : 0) +
@@ -873,13 +917,12 @@ function evaluateLandmarks(
     (poseOk ? 5 : 0);
 
   let message = "Position your face inside the oval";
-  if (!singleFace) message = "Only one person should be in frame.";
+  if (!centered) message = "Centre your face inside the oval.";
+  else if (!distance) message = heightFraction <= 0.45 ? "Move a little closer." : "Move back a little.";
+  else if (!poseOk) message = "Face the camera directly — don't tilt or turn your head.";
   else if (!light) message = "Lighting is uneven — move to brighter, even light.";
   else if (!highlightsOk) message = "Too much glare/backlight on the face — turn away from direct light.";
   else if (!sharp) message = "Hold steady — image looks blurry.";
-  else if (!centered) message = "Centre your face inside the oval.";
-  else if (!distance) message = heightFraction <= 0.45 ? "Move a little closer." : "Move back a little.";
-  else if (!poseOk) message = "Face the camera directly — don't tilt or turn your head.";
   else if (!eyesOpen) message = "Eyes look closed — open your eyes.";
   else if (!backgroundOk) message = "Background is busy — plain background preferred, but you can continue.";
   else if (!still) message = "Hold still…";
@@ -904,19 +947,36 @@ function evaluateLandmarks(
   };
 }
 
+/** Eye-aspect-ratio (Soukupová & Čech 2016) from a 6-point eyelid contour:
+ *  [outer corner, upper-1, upper-2, inner corner, lower-2, lower-1]. Lower
+ *  values mean the eye is more closed; ignores landmark z (depth). */
+function eyeAspectRatio(
+  points: Array<{ x: number; y: number }>,
+  indices: number[],
+  mapX: (n: number) => number,
+  mapY: (n: number) => number
+) {
+  const p = indices.map((i) => ({ x: mapX(points[i].x), y: mapY(points[i].y) }));
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+  const vertical = dist(p[1], p[5]) + dist(p[2], p[4]);
+  const horizontal = dist(p[0], p[3]);
+  if (horizontal < 1e-6) return 1; // degenerate — treat as open rather than a false "closed"
+  return vertical / (2 * horizontal);
+}
+
 /** Decode yaw/pitch/roll (degrees) from MediaPipe's column-major 4x4
  *  facial transformation matrix. This is a best-effort UX signal (guidance
- *  only, ±15° gate) — not a compliance-grade pose estimate. */
+ *  only, bounded gate) — not a compliance-grade pose estimate. */
 function eulerAnglesFromMatrix(m: Float32Array | number[]) {
-  const m00 = m[0], m10 = m[1], m20 = m[2];
+  const m00 = m[0], m20 = m[2];
   const m01 = m[4], m11 = m[5], m21 = m[6];
-  const m02 = m[8], m12 = m[9], m22 = m[10];
+  const m02 = m[8];
 
   const pitch = Math.asin(clamp(-m21, -1, 1));
   let yaw: number;
   let roll: number;
   if (Math.abs(m21) < 0.9999) {
-    yaw = Math.atan2(m20, m22);
+    yaw = Math.atan2(m20, m[10]);
     roll = Math.atan2(m01, m11);
   } else {
     yaw = Math.atan2(-m02, m00);
@@ -930,28 +990,89 @@ function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));
 }
 
-/** Variance of luminance sampled from the four corners (outside the oval),
- *  as a rough "is the background plain" signal. */
-function sampleBackgroundVariance(d: Uint8ClampedArray, sW: number, sH: number, ovalWFrac: number, ovalHFrac: number) {
+/** Point-in-polygon test (ray casting). */
+function pointInPolygon(x: number, y: number, poly: Array<{ x: number; y: number }>) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/** Mean luma, Laplacian-variance sharpness, and highlight-clipping fraction,
+ *  computed only over pixels inside the face-oval hull polygon within the
+ *  given crop — never the whole frame, never a fixed rectangle. */
+function sampleFaceHullMetrics(ctx: CanvasRenderingContext2D, fx: number, fy: number, fw: number, fh: number, hull: Array<{ x: number; y: number }>) {
+  const data = ctx.getImageData(fx, fy, fw, fh).data;
+  const luma = new Float32Array(fw * fh);
+  const inside = new Uint8Array(fw * fh);
+
+  let lumaSum = 0;
+  let clipped = 0;
+  let insideCount = 0;
+  for (let y = 0; y < fh; y++) {
+    for (let x = 0; x < fw; x++) {
+      const idx = y * fw + x;
+      const isInside = pointInPolygon(fx + x, fy + y, hull);
+      inside[idx] = isInside ? 1 : 0;
+      if (!isInside) continue;
+      const i = idx * 4;
+      const l = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      luma[idx] = l;
+      lumaSum += l;
+      insideCount++;
+      if (data[i] >= 250 && data[i + 1] >= 250 && data[i + 2] >= 250) clipped++;
+    }
+  }
+
+  if (insideCount === 0) return { avgLuma: 0, laplacianVariance: 0, clippedFraction: 0 };
+
+  const avgLuma = lumaSum / insideCount;
+
+  // Laplacian variance (4-neighbour kernel), accumulated only for interior
+  // pixels that are themselves inside the hull.
+  let lapSum = 0;
+  let lapSumSq = 0;
+  let lapCount = 0;
+  for (let y = 1; y < fh - 1; y++) {
+    for (let x = 1; x < fw - 1; x++) {
+      const idx = y * fw + x;
+      if (!inside[idx]) continue;
+      const lap = luma[idx - 1] + luma[idx + 1] + luma[idx - fw] + luma[idx + fw] - 4 * luma[idx];
+      lapSum += lap;
+      lapSumSq += lap * lap;
+      lapCount++;
+    }
+  }
+  const lapMean = lapCount ? lapSum / lapCount : 0;
+  const laplacianVariance = lapCount ? lapSumSq / lapCount - lapMean * lapMean : 0;
+
+  return { avgLuma, laplacianVariance, clippedFraction: clipped / insideCount };
+}
+
+/** Variance of luminance sampled from the four frame corners (outside the
+ *  oval), as a rough "is the background plain" signal. */
+function sampleBackgroundVariance(ctx: CanvasRenderingContext2D, W: number, H: number) {
+  const patch = Math.max(4, Math.round(Math.min(W, H) * 0.1));
+  const corners = [
+    { x: 0, y: 0 },
+    { x: W - patch, y: 0 },
+    { x: 0, y: H - patch },
+    { x: W - patch, y: H - patch }
+  ];
   let sum = 0;
   let sumSq = 0;
   let count = 0;
-  const patch = Math.max(4, Math.round(Math.min(sW, sH) * 0.12));
-  const corners = [
-    { x: 0, y: 0 },
-    { x: sW - patch, y: 0 },
-    { x: 0, y: sH - patch },
-    { x: sW - patch, y: sH - patch }
-  ];
   for (const { x, y } of corners) {
-    for (let yy = Math.max(0, y); yy < Math.min(sH, y + patch); yy++) {
-      for (let xx = Math.max(0, x); xx < Math.min(sW, x + patch); xx++) {
-        const i = (yy * sW + xx) * 4;
-        const luma = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        sum += luma;
-        sumSq += luma * luma;
-        count++;
-      }
+    const data = ctx.getImageData(Math.max(0, x), Math.max(0, y), patch, patch).data;
+    for (let i = 0; i < data.length; i += 4) {
+      const luma = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      sum += luma;
+      sumSq += luma * luma;
+      count++;
     }
   }
   if (!count) return 0;

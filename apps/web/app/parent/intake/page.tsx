@@ -151,32 +151,6 @@ type PhotoAnalysisState = {
   };
 };
 
-type CaptureAssistantState = {
-  guidanceMode: "native" | "fallback" | "manual";
-  detectorAvailable: boolean;
-  ready: boolean;
-  faceDetected: boolean;
-  faceCentered: boolean;
-  lightingGood: boolean;
-  backgroundGood: boolean;
-  distanceGood: boolean;
-  message: string;
-};
-
-const DEFAULT_CAPTURE_ASSISTANT: CaptureAssistantState = {
-  guidanceMode: "manual",
-  detectorAvailable: false,
-  ready: false,
-  faceDetected: false,
-  faceCentered: false,
-  lightingGood: false,
-  backgroundGood: true,
-  distanceGood: false,
-  message: "Allow camera access and keep the face centered."
-};
-
-const CAPTURE_STABILITY_TARGET = 2;
-const CAMERA_ANALYSIS_INTERVAL_MS = 180;
 const MAX_PRINT_PROCESSING_EDGE = 2400;
 const MIN_PRINT_EXPORT_EDGE = 600;
 
@@ -209,11 +183,6 @@ function IntakePortalInner() {
   const [loadingSession, setLoadingSession] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [deviceId, setDeviceId] = useState("");
-  const [guidance, setGuidance] = useState("Allow camera access and keep the face centered.");
-  const [captureAssistant, setCaptureAssistant] = useState<CaptureAssistantState>(DEFAULT_CAPTURE_ASSISTANT);
-  const [captureStability, setCaptureStability] = useState(0);
   const [savedSubmissions, setSavedSubmissions] = useState(0);
   const [capturedDataUrl, setCapturedDataUrl] = useState("");
   const [photoAnalysis, setPhotoAnalysis] = useState<PhotoAnalysisState | null>(null);
@@ -243,16 +212,6 @@ function IntakePortalInner() {
     aadhaarNumber: ""
   });
   const [customFieldValues, setCustomFieldValues] = useState<Record<string, string>>({});
-
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const detectorRef = useRef<any>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const faceBoxRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
-  const analysisTimerRef = useRef<number | null>(null);
-  const captureReadyRef = useRef(false);
-  const captureInFlightRef = useRef(false);
-  const stableFrameCountRef = useRef(0);
 
   const actorType = sessionContext?.session.actorType || publicMeta?.actorType || "PARENT";
   const currentSchema = sessionContext?.dataSchema || {};
@@ -311,10 +270,6 @@ function IntakePortalInner() {
     if (tokenFromUrl) {
       void loadPublicEntry(tokenFromUrl);
     }
-    return () => {
-      stopCamera();
-      if (analysisTimerRef.current) window.clearInterval(analysisTimerRef.current);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenFromUrl]);
 
@@ -531,39 +486,6 @@ function IntakePortalInner() {
     }
   }
 
-  function resetCaptureReadiness() {
-    stableFrameCountRef.current = 0;
-    setCaptureStability(0);
-    captureReadyRef.current = false;
-  }
-
-  function applyCaptureAssistant(next: CaptureAssistantState) {
-    captureReadyRef.current = next.ready;
-    setCaptureAssistant(next);
-    setGuidance(next.message);
-  }
-
-  async function processSelectedPhoto(dataUrl: string) {
-    setEnhancingPhoto(true);
-    setStatus("Preparing print-ready photo...");
-    setError("");
-    try {
-      let finalDataUrl = dataUrl;
-      try {
-        finalDataUrl = await enhancePhotoForPrint(dataUrl, photoBackgroundPreference);
-      } catch {
-        finalDataUrl = dataUrl;
-      }
-      setCapturedDataUrl(finalDataUrl);
-      setPhotoAnalysis(null);
-      setStep("review");
-      const analysis = await analyzeCapturedPhoto(finalDataUrl);
-      return Boolean(analysis);
-    } finally {
-      setEnhancingPhoto(false);
-    }
-  }
-
   async function moveToPhoto() {
     setError("");
     if (!validateDetails()) return;
@@ -571,214 +493,9 @@ function IntakePortalInner() {
     setStep("photo");
   }
 
-  async function openCameraAfterTips() {
+  function openCameraAfterTips() {
+    // AdvancedCamera starts its own camera stream on mount — nothing to do here.
     setShowPhotoTips(false);
-    await startCamera();
-  }
-
-  async function startCamera(preserveFeedback = false) {
-    if (!preserveFeedback) {
-      setError("");
-      setStatus("");
-    }
-    resetCaptureReadiness();
-    captureInFlightRef.current = false;
-    setCaptureAssistant(DEFAULT_CAPTURE_ASSISTANT);
-    setGuidance(DEFAULT_CAPTURE_ASSISTANT.message);
-    try {
-      stopCamera();
-      const preferredVideoConstraints = {
-        width: { ideal: 1440 },
-        height: { ideal: 1920 }
-      } as const;
-      const constraints: MediaStreamConstraints = {
-        video: deviceId
-          ? { deviceId: { exact: deviceId }, ...preferredVideoConstraints }
-          : { facingMode: "user", ...preferredVideoConstraints },
-        audio: false
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      const list = await navigator.mediaDevices.enumerateDevices();
-      const cams = list.filter((device) => device.kind === "videoinput");
-      setDevices(cams);
-      if (!deviceId && cams[0]) setDeviceId(cams[0].deviceId);
-
-      const FaceDetectorCtor = (window as any).FaceDetector;
-      detectorRef.current = FaceDetectorCtor ? new FaceDetectorCtor({ fastMode: true, maxDetectedFaces: 1 }) : null;
-      if (analysisTimerRef.current) window.clearInterval(analysisTimerRef.current);
-      analysisTimerRef.current = window.setInterval(() => {
-        void analyzeFrame();
-      }, CAMERA_ANALYSIS_INTERVAL_MS);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Camera access failed");
-    }
-  }
-
-  function stopCamera() {
-    resetCaptureReadiness();
-    faceBoxRef.current = null;
-    if (analysisTimerRef.current) {
-      window.clearInterval(analysisTimerRef.current);
-      analysisTimerRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-  }
-
-  async function analyzeFrame() {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2) return;
-    const { brightness, edgeBrightness, edgeVariance } = sampleVideoFrameMetrics(video);
-    const backgroundGood = isBackgroundReady(photoBackgroundPreference, edgeBrightness, edgeVariance);
-    const backgroundBlocking = isBackgroundBlocking(photoBackgroundPreference, backgroundGood, edgeVariance);
-    let face: any = null;
-
-    if (detectorRef.current) {
-      try {
-        const faces = await detectorRef.current.detect(video);
-        face = faces?.[0]?.boundingBox || null;
-      } catch {
-        face = null;
-      }
-    }
-
-    if (!detectorRef.current) {
-      const fallback = analyzeFallbackFace(video);
-      const lightingGood = brightness >= 70;
-      const allChecksPassing =
-        fallback.faceDetected && fallback.faceCentered && fallback.distanceGood && lightingGood && !backgroundBlocking;
-      const stableFrameCount = allChecksPassing
-        ? Math.min(stableFrameCountRef.current + 1, CAPTURE_STABILITY_TARGET)
-        : 0;
-      stableFrameCountRef.current = stableFrameCount;
-      setCaptureStability(stableFrameCount);
-      const stableReady = allChecksPassing && stableFrameCount >= CAPTURE_STABILITY_TARGET;
-
-      applyCaptureAssistant({
-        guidanceMode: "fallback",
-        detectorAvailable: false,
-        ready: stableReady,
-        faceDetected: fallback.faceDetected,
-        faceCentered: fallback.faceCentered,
-        lightingGood,
-        backgroundGood,
-        distanceGood: fallback.distanceGood,
-        message: !fallback.faceDetected
-          ? "Face not clear yet. Keep the face inside the center frame and look straight at the camera."
-          : !fallback.faceCentered
-            ? "Move the face into the middle of the center frame."
-            : !fallback.distanceGood
-              ? "Move a little closer so the face fills the guide properly."
-              : !lightingGood
-                ? "Lighting is low. Move to a brighter area and hold steady."
-                : backgroundBlocking
-                  ? backgroundGuidance(photoBackgroundPreference)
-                  : !backgroundGood
-                    ? "Plain background preferred, but you can continue. Hold steady until capture is ready."
-                    : stableFrameCount < CAPTURE_STABILITY_TARGET
-                      ? `Hold steady for capture readiness (${stableFrameCount}/${CAPTURE_STABILITY_TARGET})`
-                      : "Face aligned. Capture now."
-      });
-      return;
-    }
-
-    if (!face) {
-      faceBoxRef.current = null;
-      resetCaptureReadiness();
-      applyCaptureAssistant({
-        guidanceMode: "native",
-        detectorAvailable: true,
-        ready: false,
-        faceDetected: false,
-        faceCentered: false,
-        lightingGood: brightness >= 65,
-        backgroundGood,
-        distanceGood: false,
-        message:
-          brightness < 65
-            ? "Increase light and keep the face in the middle of the frame."
-            : "Face not detected. Move the face into the middle of the frame."
-      });
-      return;
-    }
-
-    faceBoxRef.current = { x: face.x, y: face.y, width: face.width, height: face.height };
-    const cx = face.x + face.width / 2;
-    const cy = face.y + face.height / 2;
-    const dx = Math.abs(cx - video.videoWidth / 2);
-    const dy = Math.abs(cy - video.videoHeight / 2);
-    const areaRatio = (face.width * face.height) / (video.videoWidth * video.videoHeight);
-    const lightingGood = brightness >= 65;
-    const faceCentered = dx <= video.videoWidth * 0.16 && dy <= video.videoHeight * 0.2;
-    const distanceGood = areaRatio >= 0.08;
-    const allChecksPassing = lightingGood && faceCentered && distanceGood && !backgroundBlocking;
-    const stableFrameCount = allChecksPassing
-      ? Math.min(stableFrameCountRef.current + 1, CAPTURE_STABILITY_TARGET)
-      : 0;
-    stableFrameCountRef.current = stableFrameCount;
-    setCaptureStability(stableFrameCount);
-    const stableReady = allChecksPassing && stableFrameCount >= CAPTURE_STABILITY_TARGET;
-
-    applyCaptureAssistant({
-      guidanceMode: "native",
-      detectorAvailable: true,
-      ready: stableReady,
-      faceDetected: true,
-      faceCentered,
-      lightingGood,
-      backgroundGood,
-      distanceGood,
-      message: !lightingGood
-        ? "Lighting is low. Move to a brighter area."
-        : !faceCentered
-          ? "Center the face in the middle of the frame."
-          : !distanceGood
-            ? "Move a little closer so the face fits the passport crop."
-            : backgroundBlocking
-              ? backgroundGuidance(photoBackgroundPreference)
-              : !backgroundGood
-                ? "Plain background preferred, but you can continue. Keep the face centered and hold steady."
-              : stableFrameCount < CAPTURE_STABILITY_TARGET
-                ? `Hold steady for a clear capture (${stableFrameCount}/${CAPTURE_STABILITY_TARGET})`
-                : "Face clear. Capture now."
-    });
-  }
-
-  async function capturePhoto() {
-    const video = videoRef.current;
-    const canvas = captureCanvasRef.current;
-    if (!video || !canvas) return;
-    if (captureInFlightRef.current) return;
-    if (!captureReadyRef.current) {
-      setError("Wait for face, lighting, and background guidance to turn ready before capturing.");
-      return;
-    }
-    captureInFlightRef.current = true;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      captureInFlightRef.current = false;
-      return;
-    }
-
-    const crop = getPassportCropRect(video.videoWidth, video.videoHeight, faceBoxRef.current);
-    canvas.width = crop.sw;
-    canvas.height = crop.sh;
-    ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, crop.sw, crop.sh);
-
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.97);
-    stopCamera();
-    try {
-      await processSelectedPhoto(dataUrl);
-    } finally {
-      captureInFlightRef.current = false;
-    }
   }
 
   async function handlePhotoUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -791,7 +508,6 @@ function IntakePortalInner() {
       const croppedDataUrl = await cropImageDataUrlToPassport(dataUrl);
       setRawPhotoUrl(croppedDataUrl);
       setShowOriginalPhoto(false);
-      stopCamera();
       setEnhancingPhoto(true);
       setError("");
       setPhotoAnalysis(null);
@@ -1342,7 +1058,7 @@ function IntakePortalInner() {
                   )}
                   <div className="flex gap-3">
                     <button
-                      onClick={() => { setCapturedDataUrl(""); setRawPhotoUrl(""); setPhotoAnalysis(null); setShowPhotoTips(false); void startCamera(); }}
+                      onClick={() => { setCapturedDataUrl(""); setRawPhotoUrl(""); setPhotoAnalysis(null); setShowPhotoTips(false); }}
                       className="flex flex-1 items-center justify-center gap-2 rounded-2xl
                                  border border-[var(--line-soft)] py-3 text-sm font-medium transition hover-glow"
                     >
@@ -1366,7 +1082,6 @@ function IntakePortalInner() {
                   onCapture={async (result: CaptureResult) => {
                     setRawPhotoUrl(result.dataUrl);
                     setShowOriginalPhoto(false);
-                    stopCamera();
                     setEnhancingPhoto(true);
                     setError("");
                     setPhotoAnalysis(null);
@@ -1397,11 +1112,9 @@ function IntakePortalInner() {
                 )}
               </div>
             ) : null}
-            {/* ── hidden canvas used by analyzePhoto helper ── */}
-            <canvas ref={captureCanvasRef} className="hidden" />
             <div className="mt-3">
               <button
-                onClick={() => { stopCamera(); setStep("details"); }}
+                onClick={() => setStep("details")}
                 className="w-full rounded-xl border border-[var(--line-soft)] px-3 py-2 text-xs"
               >
                 Back
@@ -1447,7 +1160,7 @@ function IntakePortalInner() {
                   </div>
                 </div>
                 <button
-                  onClick={() => { setError(""); setStatus(""); setShowPhotoTips(false); setStep("photo"); void startCamera(); }}
+                  onClick={() => { setError(""); setStatus(""); setShowPhotoTips(false); setStep("photo"); }}
                   className="w-full rounded-xl border border-[var(--line-soft)] px-3 py-1.5 text-xs text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
                 >
                   <Camera size={11} className="mr-1 inline" /> Retake photo
@@ -2090,162 +1803,6 @@ function resolveBgColor(mode: string) {
   if (normalized === "LIGHT_BLUE") return "#d8e9ff";
   if (normalized === "LIGHT_GRAY") return "#e7e7e7";
   return "transparent";
-}
-
-function sampleVideoFrameMetrics(video: HTMLVideoElement) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 120;
-  canvas.height = 80;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    return {
-      brightness: 0,
-      edgeBrightness: 0,
-      edgeVariance: 0
-    };
-  }
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-  let totalBrightnessSum = 0;
-  let edgeSum = 0;
-  let edgeSumSquares = 0;
-  let edgeCount = 0;
-  for (let index = 0; index < data.length; index += 4) {
-    totalBrightnessSum += 0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2];
-  }
-  for (let y = 0; y < canvas.height; y += 1) {
-    for (let x = 0; x < canvas.width; x += 1) {
-      const isEdge =
-        x < canvas.width * 0.18 ||
-        x > canvas.width * 0.82 ||
-        y < canvas.height * 0.18 ||
-        y > canvas.height * 0.82;
-      if (!isEdge) continue;
-      const offset = (y * canvas.width + x) * 4;
-      const brightness = 0.2126 * data[offset] + 0.7152 * data[offset + 1] + 0.0722 * data[offset + 2];
-      edgeSum += brightness;
-      edgeSumSquares += brightness * brightness;
-      edgeCount += 1;
-    }
-  }
-  const edgeMean = edgeCount ? edgeSum / edgeCount : 0;
-  return {
-    brightness: totalBrightnessSum / (data.length / 4),
-    edgeBrightness: edgeMean,
-    edgeVariance: edgeCount ? edgeSumSquares / edgeCount - edgeMean * edgeMean : 0
-  };
-}
-
-function analyzeFallbackFace(video: HTMLVideoElement) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 160;
-  canvas.height = 120;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    return { faceDetected: false, faceCentered: false, distanceGood: false };
-  }
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-  const startX = Math.floor(canvas.width * 0.24);
-  const endX = Math.ceil(canvas.width * 0.76);
-  const startY = Math.floor(canvas.height * 0.14);
-  const endY = Math.ceil(canvas.height * 0.86);
-
-  let skinCount = 0;
-  let total = 0;
-  let luminanceSum = 0;
-  let luminanceSquares = 0;
-  let gradientSum = 0;
-  let centroidX = 0;
-  let centroidY = 0;
-
-  for (let y = startY; y < endY; y += 1) {
-    for (let x = startX; x < endX; x += 1) {
-      const offset = (y * canvas.width + x) * 4;
-      const r = data[offset];
-      const g = data[offset + 1];
-      const b = data[offset + 2];
-      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      luminanceSum += luminance;
-      luminanceSquares += luminance * luminance;
-      total += 1;
-
-      const skinRgb =
-        r > 88 &&
-        g > 36 &&
-        b > 16 &&
-        Math.max(r, g, b) - Math.min(r, g, b) > 15 &&
-        Math.abs(r - g) > 8 &&
-        r > g &&
-        r > b;
-      const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
-      const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
-      const skinYcc = cb >= 76 && cb <= 132 && cr >= 132 && cr <= 176;
-      if (skinRgb && skinYcc) {
-        skinCount += 1;
-        centroidX += x;
-        centroidY += y;
-      }
-
-      if (x < endX - 1 && y < endY - 1) {
-        const right = (y * canvas.width + (x + 1)) * 4;
-        const down = ((y + 1) * canvas.width + x) * 4;
-        const rightL = 0.2126 * data[right] + 0.7152 * data[right + 1] + 0.0722 * data[right + 2];
-        const downL = 0.2126 * data[down] + 0.7152 * data[down + 1] + 0.0722 * data[down + 2];
-        gradientSum += Math.abs(luminance - rightL) + Math.abs(luminance - downL);
-      }
-    }
-  }
-
-  if (!total) {
-    return { faceDetected: false, faceCentered: false, distanceGood: false };
-  }
-
-  const skinRatio = skinCount / total;
-  const mean = luminanceSum / total;
-  const variance = luminanceSquares / total - mean * mean;
-  const gradient = gradientSum / total;
-  const faceDetected = skinRatio >= 0.06 && skinRatio <= 0.62 && variance >= 240 && gradient >= 9;
-  if (!faceDetected || !skinCount) {
-    return { faceDetected: false, faceCentered: false, distanceGood: false };
-  }
-
-  const centerX = centroidX / skinCount;
-  const centerY = centroidY / skinCount;
-  const guideCenterX = (startX + endX) / 2;
-  const guideCenterY = (startY + endY) / 2;
-  const faceCentered =
-    Math.abs(centerX - guideCenterX) <= (endX - startX) * 0.18 &&
-    Math.abs(centerY - guideCenterY) <= (endY - startY) * 0.2;
-  const distanceGood = skinRatio >= 0.11 && skinRatio <= 0.46;
-
-  return { faceDetected, faceCentered, distanceGood };
-}
-
-function isBackgroundReady(preference: string, edgeBrightness: number, edgeVariance: number) {
-  const normalized = (preference || "NONE").toUpperCase();
-  if (normalized === "PLAIN") return edgeVariance <= 2600;
-  if (normalized === "NONE") return edgeVariance <= 2100;
-  if (normalized === "WHITE") return edgeBrightness >= 118 && edgeVariance <= 1400;
-  if (normalized === "LIGHT") return edgeBrightness >= 105 && edgeVariance <= 1700;
-  return edgeBrightness >= 85 && edgeVariance <= 1900;
-}
-
-function isBackgroundBlocking(preference: string, backgroundGood: boolean, edgeVariance: number) {
-  const normalized = (preference || "NONE").toUpperCase();
-  if (normalized === "NONE") return false;
-  if (normalized === "PLAIN") return edgeVariance > 4200;
-  return !backgroundGood;
-}
-
-function backgroundGuidance(preference: string) {
-  const normalized = (preference || "NONE").toUpperCase();
-  if (normalized === "PLAIN") return "Use any plain, uncluttered background behind the face.";
-  if (normalized === "WHITE") return "Use a plain white or very light background.";
-  if (normalized === "LIGHT") return "Use a clean light background behind the face.";
-  if (normalized === "NONE") return "Keep the background plain and uncluttered.";
-  return `Use a clean ${normalized.toLowerCase()} background.`;
 }
 
 function Field({
