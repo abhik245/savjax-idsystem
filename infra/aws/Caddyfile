@@ -19,6 +19,12 @@
 	@public path /favicon.ico /robots.txt *.png *.jpg *.jpeg *.svg *.webp *.woff2
 	header @public Cache-Control "public, max-age=86400, stale-while-revalidate=604800"
 
+	# Long cache for the vendored MediaPipe WASM runtime + model — these are
+	# large (~38MB) and immutable per deploy; schools have unreliable
+	# connectivity so avoid re-fetching them every visit.
+	@mediapipe path /mediapipe/*
+	header @mediapipe Cache-Control "public, max-age=604800, stale-while-revalidate=2592000"
+
 	reverse_proxy web:3000
 }
 

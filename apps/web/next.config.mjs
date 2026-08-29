@@ -30,10 +30,15 @@ const isDev = process.env.NODE_ENV !== "production";
 const cspDirectives = [
   "default-src 'self'",
   // Scripts: unsafe-inline is required for Next.js hydration scripts.
-  // unsafe-eval is restricted to dev (webpack HMR) only.
+  // unsafe-eval is restricted to dev (webpack HMR) only. wasm-unsafe-eval is
+  // narrower than unsafe-eval (it only permits WebAssembly compilation, not
+  // string eval()) and is required in both envs for the MediaPipe
+  // FaceLandmarker WASM runtime to instantiate at all -- without it the
+  // browser silently blocks WASM compilation even though the .wasm file
+  // itself fetches fine, which otherwise looks just like a load failure.
   isDev
-    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-    : "script-src 'self' 'unsafe-inline'",
+    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
+    : "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
   // Styles: Tailwind requires unsafe-inline
   "style-src 'self' 'unsafe-inline'",
   // Images: data URIs for base64 photo previews, blob for canvas/camera
